@@ -430,9 +430,9 @@ spec:
 <1> Pinned to the `stable-1.1` channel -- will only receive 1.1.x patches
 <2> Manual approval adds a second layer of protection
 
-2. **Set Manual approval** as a safety net even within the pinned channel.
+* **Set Manual approval** as a safety net even within the pinned channel.
 
-3. **Test before approving** any install plan in a staging environment.
+* **Test before approving** any install plan in a staging environment.
 
 === 4.5 Inspect Current Pinning Status
 
