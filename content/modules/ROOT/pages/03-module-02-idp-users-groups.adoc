@@ -1,0 +1,1053 @@
+= Module 2: Integrate with IDP, Users & Group Management
+:navtitle: IDP, Users & Group Management
+
+== Learning Objectives
+
+By the end of this module you will be able to:
+
+* Deploy FreeIPA in-cluster as an LDAP directory using Helm
+* Configure an LDAP identity provider on OpenShift
+* Configure an OIDC identity provider using Keycloak
+* Create persona-based groups for data science team members
+* Configure the RHOAI Auth CR to restrict dashboard access to authorized groups
+* Build and serve a wine quality classifier using Feature Store (Feast)
+* Register a trained model in the RHOAI model registry
+* Describe the full RBAC surface area across RHOAI subsystems
+
+== Identity Provider Architecture
+
+RHOAI inherits its authentication from OpenShift, which supports multiple identity providers simultaneously. In this module you will configure two complementary providers:
+
+* **LDAP via FreeIPA** -- Provides centralized user and group directory services. Groups defined in FreeIPA map directly to OpenShift groups, enabling persona-based access control.
+* **OIDC via Keycloak** -- Provides federated single sign-on with support for multi-factor authentication, social login, and fine-grained authorization flows.
+
+In production environments, these providers connect to existing enterprise directories (Active Directory, Okta, Azure AD). This workshop deploys standalone instances to demonstrate the integration patterns without requiring external infrastructure.
+
+== Exercise 1: Deploy FreeIPA Using Helm
+
+FreeIPA provides LDAP directory services, Kerberos authentication, DNS, and certificate authority functions. You will deploy it as the primary user directory for this workshop.
+
+=== Step 1: Add the Helm Repository
+
+[source,bash,role="execute"]
+----
+helm repo add freeipa https://freeipa.github.io/helm-charts
+helm repo update
+----
+
+=== Step 2: Create the FreeIPA Namespace
+
+[source,bash,role="execute"]
+----
+oc new-project freeipa
+----
+
+=== Step 3: Create the FreeIPA Values File
+
+[source,bash,role="execute",subs="attributes"]
+----
+cat <<EOF > /tmp/freeipa-values.yaml
+replicas: 1
+image:
+  repository: quay.io/freeipa/freeipa-server
+  tag: fedora-latest
+server:
+  realm: EXAMPLE.COM
+  domain: example.com
+  adminPassword: "{password}"
+  dsPassword: "{password}"
+persistence:
+  enabled: true
+  size: 5Gi
+service:
+  type: ClusterIP
+route:
+  enabled: true
+  host: ipa.{openshift_cluster_ingress_domain}
+securityContext:
+  runAsUser: 0
+  runAsGroup: 0
+  fsGroup: 0
+EOF
+----
+
+=== Step 4: Install FreeIPA
+
+[source,bash,role="execute"]
+----
+helm upgrade --install freeipa freeipa/freeipa-server \
+  -n freeipa \
+  -f /tmp/freeipa-values.yaml \
+  --timeout 10m \
+  --wait
+----
+
+[NOTE]
+====
+FreeIPA initial setup takes 5-8 minutes as it configures the LDAP directory, Kerberos KDC, and internal CA. The `--wait` flag ensures the Helm command does not return until the pod is healthy.
+====
+
+=== Step 5: Populate Users and Groups
+
+Once FreeIPA is running, create workshop users and organize them into persona-based groups:
+
+[source,bash,role="execute",subs="attributes"]
+----
+FreeIPA_POD=$(oc get pods -n freeipa -l app.kubernetes.io/name=freeipa-server -o jsonpath='{.items[0].metadata.name}')
+
+oc exec -n freeipa $FreeIPA_POD -- bash -c '
+  echo "{password}" | kinit admin
+
+  # Create persona groups
+  ipa group-add data-scientists --desc="Data Scientists"
+  ipa group-add data-engineers --desc="Data Engineers"
+  ipa group-add ml-engineers --desc="ML Engineers"
+  ipa group-add rhods-admins --desc="RHOAI Administrators"
+  ipa group-add rhods-users --desc="RHOAI Users"
+
+  # Create users
+  for user in ds-alice ds-bob; do
+    ipa user-add $user --first=${user##*-} --last=Workshop \
+      --password <<< $"{password}\n{password}\n"
+    ipa group-add-member data-scientists --users=$user
+    ipa group-add-member rhods-users --users=$user
+  done
+
+  for user in de-carol de-dave; do
+    ipa user-add $user --first=${user##*-} --last=Workshop \
+      --password <<< $"{password}\n{password}\n"
+    ipa group-add-member data-engineers --users=$user
+    ipa group-add-member rhods-users --users=$user
+  done
+
+  for user in mle-eve mle-frank; do
+    ipa user-add $user --first=${user##*-} --last=Workshop \
+      --password <<< $"{password}\n{password}\n"
+    ipa group-add-member ml-engineers --users=$user
+    ipa group-add-member rhods-users --users=$user
+  done
+
+  # Add admin user to rhods-admins
+  ipa user-add ops-admin --first=Ops --last=Admin \
+    --password <<< $"{password}\n{password}\n"
+  ipa group-add-member rhods-admins --users=ops-admin
+  ipa group-add-member rhods-users --users=ops-admin
+
+  echo "Users and groups created successfully"
+'
+----
+
+=== Verify: Exercise 1
+
+[source,bash,role="execute"]
+----
+oc exec -n freeipa $FreeIPA_POD -- bash -c 'echo "{password}" | kinit admin && ipa group-find --all | grep -E "Group name:|GID|Member users"'
+----
+
+You should see the five groups (`data-scientists`, `data-engineers`, `ml-engineers`, `rhods-admins`, `rhods-users`) with their member users listed.
+
+[source,bash,role="execute"]
+----
+oc get route -n freeipa
+----
+
+Expected output:
+
+----
+NAME      HOST/PORT                              PATH   SERVICES   PORT   TERMINATION
+freeipa   ipa.apps.cluster.example.com                  freeipa    443    passthrough
+----
+
+== Exercise 2: Configure LDAP Identity Provider on OpenShift
+
+Now configure OpenShift to authenticate users against the FreeIPA LDAP directory.
+
+=== Step 1: Retrieve the FreeIPA CA Certificate
+
+[source,bash,role="execute"]
+----
+oc exec -n freeipa $FreeIPA_POD -- cat /etc/ipa/ca.crt > /tmp/freeipa-ca.crt
+----
+
+=== Step 2: Create the CA ConfigMap
+
+[source,bash,role="execute"]
+----
+oc create configmap freeipa-ca \
+  --from-file=ca.crt=/tmp/freeipa-ca.crt \
+  -n openshift-config
+----
+
+=== Step 3: Create the Bind Password Secret
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc create secret generic freeipa-ldap-secret \
+  --from-literal=bindPassword="{password}" \
+  -n openshift-config
+----
+
+=== Step 4: Patch the OAuth Configuration
+
+[source,bash,role="execute"]
+----
+oc patch oauth cluster --type=merge -p '
+{
+  "spec": {
+    "identityProviders": [
+      {
+        "name": "freeipa-ldap",
+        "type": "LDAP",
+        "mappingMethod": "claim",
+        "ldap": {
+          "attributes": {
+            "id": ["dn"],
+            "email": ["mail"],
+            "name": ["cn"],
+            "preferredUsername": ["uid"]
+          },
+          "bindDN": "uid=admin,cn=users,cn=accounts,dc=example,dc=com",
+          "bindPassword": {
+            "name": "freeipa-ldap-secret"
+          },
+          "ca": {
+            "name": "freeipa-ca"
+          },
+          "insecure": false,
+          "url": "ldaps://freeipa.freeipa.svc.cluster.local:636/cn=users,cn=accounts,dc=example,dc=com?uid"
+        }
+      }
+    ]
+  }
+}'
+----
+
+=== Step 5: Wait for OAuth Pods to Roll
+
+The OAuth server pods will restart to pick up the new configuration:
+
+[source,bash,role="execute"]
+----
+oc rollout status deployment/oauth-openshift -n openshift-authentication --timeout=120s
+----
+
+=== Step 6: Sync LDAP Groups to OpenShift
+
+Create a sync configuration to pull FreeIPA groups into OpenShift:
+
+[source,bash,role="execute"]
+----
+cat <<'EOF' > /tmp/ldap-sync.yaml
+kind: LDAPSyncConfig
+apiVersion: v1
+url: ldaps://freeipa.freeipa.svc.cluster.local:636
+bindDN: uid=admin,cn=users,cn=accounts,dc=example,dc=com
+bindPassword:
+  file: /tmp/bind-password
+ca: /tmp/freeipa-ca.crt
+insecure: false
+rfc2307:
+  groupsQuery:
+    baseDN: cn=groups,cn=accounts,dc=example,dc=com
+    scope: sub
+    derefAliases: never
+    filter: (objectClass=groupOfNames)
+  groupUIDAttribute: dn
+  groupNameAttributes:
+  - cn
+  groupMembershipAttributes:
+  - member
+  usersQuery:
+    baseDN: cn=users,cn=accounts,dc=example,dc=com
+    scope: sub
+    derefAliases: never
+  userUIDAttribute: dn
+  userNameAttributes:
+  - uid
+EOF
+----
+
+[source,bash,role="execute",subs="attributes"]
+----
+echo -n "{password}" > /tmp/bind-password
+oc adm groups sync --sync-config=/tmp/ldap-sync.yaml --confirm
+rm /tmp/bind-password
+----
+
+=== Verify: Exercise 2
+
+Test LDAP login with one of the created users:
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc login -u ds-alice -p {password} {openshift_api_url}
+oc whoami
+----
+
+Expected output:
+
+----
+ds-alice
+----
+
+Switch back to the admin user:
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc login -u {user} -p {password} {openshift_api_url}
+----
+
+Verify that groups were synced:
+
+[source,bash,role="execute"]
+----
+oc get groups
+----
+
+Expected output:
+
+----
+NAME              USERS
+data-scientists   ds-alice, ds-bob
+data-engineers    de-carol, de-dave
+ml-engineers      mle-eve, mle-frank
+rhods-admins      ops-admin
+rhods-users       ds-alice, ds-bob, de-carol, de-dave, mle-eve, mle-frank, ops-admin
+----
+
+== Exercise 3: Configure OIDC Identity Provider Using Keycloak
+
+Keycloak provides OpenID Connect (OIDC) authentication with support for federated identity, multi-factor authentication, and fine-grained authorization.
+
+=== Step 1: Verify Keycloak Is Running
+
+Your workshop environment includes a pre-deployed Keycloak instance. Verify it is accessible:
+
+[source,bash,role="execute"]
+----
+oc get pods -n keycloak -l app=keycloak
+----
+
+Expected output:
+
+----
+NAME                        READY   STATUS    RESTARTS   AGE
+keycloak-0                  1/1     Running   0          1h
+----
+
+Access the Keycloak admin console at:
+
+{keycloak_url}
+
+=== Step 2: Create an OpenShift Client in Keycloak
+
+[source,bash,role="execute",subs="attributes"]
+----
+KEYCLOAK_POD=$(oc get pods -n keycloak -l app=keycloak -o jsonpath='{.items[0].metadata.name}')
+
+oc exec -n keycloak $KEYCLOAK_POD -- /opt/keycloak/bin/kcadm.sh config credentials \
+  --server http://localhost:8080 \
+  --realm master \
+  --user admin \
+  --password {password}
+
+oc exec -n keycloak $KEYCLOAK_POD -- /opt/keycloak/bin/kcadm.sh create clients \
+  -r master \
+  -s clientId=openshift \
+  -s enabled=true \
+  -s 'redirectUris=["https://oauth-openshift.{openshift_cluster_ingress_domain}/oauth2callback/keycloak-oidc"]' \
+  -s clientAuthenticatorType=client-secret \
+  -s secret=openshift-client-secret \
+  -s directAccessGrantsEnabled=true
+----
+
+=== Step 3: Create the OIDC Client Secret in OpenShift
+
+[source,bash,role="execute"]
+----
+oc create secret generic keycloak-oidc-secret \
+  --from-literal=clientSecret=openshift-client-secret \
+  -n openshift-config
+----
+
+=== Step 4: Add the OIDC Identity Provider to OAuth
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc patch oauth cluster --type=json -p '[
+  {
+    "op": "add",
+    "path": "/spec/identityProviders/-",
+    "value": {
+      "name": "keycloak-oidc",
+      "type": "OpenID",
+      "mappingMethod": "claim",
+      "openID": {
+        "clientID": "openshift",
+        "clientSecret": {
+          "name": "keycloak-oidc-secret"
+        },
+        "issuer": "{keycloak_url}/realms/master",
+        "claims": {
+          "preferredUsername": ["preferred_username"],
+          "name": ["name"],
+          "email": ["email"]
+        }
+      }
+    }
+  }
+]'
+----
+
+=== Step 5: Wait for OAuth Rollout
+
+[source,bash,role="execute"]
+----
+oc rollout status deployment/oauth-openshift -n openshift-authentication --timeout=120s
+----
+
+=== Verify: Exercise 3
+
+Confirm both identity providers are configured:
+
+[source,bash,role="execute"]
+----
+oc get oauth cluster -o jsonpath='{range .spec.identityProviders[*]}{.name}{"\n"}{end}'
+----
+
+Expected output:
+
+----
+freeipa-ldap
+keycloak-oidc
+----
+
+Open the OpenShift console login page. You should now see both **freeipa-ldap** and **keycloak-oidc** listed as login options alongside any existing providers.
+
+== Exercise 4: Create Persona-Based Groups and Configure RHOAI Auth CR
+
+With identity providers configured, you now set up the RHOAI authorization model to control who can access the RHOAI dashboard and with what level of access.
+
+=== Step 1: Verify Groups Exist
+
+Confirm the LDAP-synced groups are available:
+
+[source,bash,role="execute"]
+----
+oc get group rhods-admins rhods-users -o custom-columns=NAME:.metadata.name,USERS:.users
+----
+
+Expected output:
+
+----
+NAME           USERS
+rhods-admins   [ops-admin]
+rhods-users    [ds-alice ds-bob de-carol de-dave mle-eve mle-frank ops-admin]
+----
+
+=== Step 2: Configure the RHOAI Auth CR
+
+The RHOAI Auth CR (`services.platform.opendatahub.io`) controls which groups can access the RHOAI dashboard. Update it to use the groups you created:
+
+[source,bash,role="execute"]
+----
+cat <<'EOF' | oc apply -f -
+apiVersion: services.platform.opendatahub.io/v1alpha1
+kind: Auth
+metadata:
+  name: auth-config
+  namespace: redhat-ods-applications
+spec:
+  adminGroups:
+    - rhods-admins
+  allowedGroups:
+    - rhods-users
+EOF
+----
+
+[IMPORTANT]
+====
+The `adminGroups` list defines who can administer RHOAI settings (manage serving runtimes, cluster settings, accelerator profiles). The `allowedGroups` list defines who can access the RHOAI dashboard at all. Users not in `allowedGroups` will see an "Access denied" page.
+====
+
+=== Step 3: Create Data Science Project Namespaces Per Persona
+
+[source,bash,role="execute"]
+----
+for team in data-scientists data-engineers ml-engineers; do
+  oc new-project rhoai-${team}
+  oc adm policy add-role-to-group edit ${team} -n rhoai-${team}
+  oc adm policy add-role-to-group view rhods-users -n rhoai-${team}
+done
+----
+
+=== Step 4: Configure Custom Workbench Roles (Optional)
+
+[NOTE]
+====
+Custom workbench roles provide finer-grained access control within data science projects. These are defined as `ClusterRoles` and bound at the namespace level.
+====
+
+Create custom workbench roles for different access levels:
+
+[source,bash,role="execute"]
+----
+cat <<'EOF' | oc apply -f -
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workbench-maintainer
+  labels:
+    opendatahub.io/dashboard: "true"
+    opendatahub.io/role-type: "workbench"
+rules:
+  - apiGroups: ["kubeflow.org"]
+    resources: ["notebooks"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workbench-reader
+  labels:
+    opendatahub.io/dashboard: "true"
+    opendatahub.io/role-type: "workbench"
+rules:
+  - apiGroups: ["kubeflow.org"]
+    resources: ["notebooks"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workbench-operator
+  labels:
+    opendatahub.io/dashboard: "true"
+    opendatahub.io/role-type: "workbench"
+rules:
+  - apiGroups: ["kubeflow.org"]
+    resources: ["notebooks"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workbench-editor
+  labels:
+    opendatahub.io/dashboard: "true"
+    opendatahub.io/role-type: "workbench"
+rules:
+  - apiGroups: ["kubeflow.org"]
+    resources: ["notebooks"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+EOF
+----
+
+=== Verify: Exercise 4
+
+[source,bash,role="execute"]
+----
+oc get auth auth-config -n redhat-ods-applications -o jsonpath='{.spec}' | python3 -m json.tool
+----
+
+Expected output:
+
+[source,json]
+----
+{
+    "adminGroups": [
+        "rhods-admins"
+    ],
+    "allowedGroups": [
+        "rhods-users"
+    ]
+}
+----
+
+[source,bash,role="execute"]
+----
+oc get clusterroles -l opendatahub.io/role-type=workbench -o custom-columns=NAME:.metadata.name
+----
+
+Expected output:
+
+----
+NAME
+workbench-editor
+workbench-maintainer
+workbench-operator
+workbench-reader
+----
+
+== Exercise 5: Build and Serve a Wine Quality Classifier Using Feature Store
+
+In this exercise you will use Feast (Feature Store) to prepare features, train a wine quality classification model, and deploy it for inference. This exercise demonstrates how the persona-based groups you configured interact with RHOAI data science workflows.
+
+=== Step 1: Create the Data Science Project
+
+[source,bash,role="execute"]
+----
+oc new-project wine-classifier
+oc adm policy add-role-to-group edit data-scientists -n wine-classifier
+----
+
+=== Step 2: Deploy the Feature Store (Feast)
+
+[source,bash,role="execute"]
+----
+cat <<'EOF' | oc apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feast-feature-repo
+  namespace: wine-classifier
+data:
+  feature_store.yaml: |
+    project: wine_quality
+    registry: /tmp/feast-registry/registry.db
+    provider: local
+    online_store:
+      type: sqlite
+      path: /tmp/feast-online/online_store.db
+    entity_key_serialization_version: 3
+  wine_features.py: |
+    from feast import Entity, FeatureView, Field, FileSource
+    from feast.types import Float64, Int64
+    from datetime import timedelta
+
+    wine_sample = Entity(
+        name="wine_id",
+        join_keys=["wine_id"],
+    )
+
+    wine_source = FileSource(
+        path="/data/wine-quality.parquet",
+        timestamp_field="event_timestamp",
+    )
+
+    wine_features = FeatureView(
+        name="wine_features",
+        entities=[wine_sample],
+        ttl=timedelta(days=365),
+        schema=[
+            Field(name="fixed_acidity", dtype=Float64),
+            Field(name="volatile_acidity", dtype=Float64),
+            Field(name="citric_acid", dtype=Float64),
+            Field(name="residual_sugar", dtype=Float64),
+            Field(name="chlorides", dtype=Float64),
+            Field(name="free_sulfur_dioxide", dtype=Float64),
+            Field(name="total_sulfur_dioxide", dtype=Float64),
+            Field(name="density", dtype=Float64),
+            Field(name="ph", dtype=Float64),
+            Field(name="sulphates", dtype=Float64),
+            Field(name="alcohol", dtype=Float64),
+            Field(name="quality", dtype=Int64),
+        ],
+        source=wine_source,
+        online=True,
+    )
+EOF
+----
+
+=== Step 3: Create the Training Pipeline Script
+
+[source,bash,role="execute"]
+----
+cat <<'PYEOF' | oc create configmap wine-training-script -n wine-classifier --from-file=train.py=/dev/stdin
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, accuracy_score
+import joblib
+import os
+
+# Load wine quality dataset
+from sklearn.datasets import load_wine
+data = load_wine()
+df = pd.DataFrame(data.data, columns=data.feature_names)
+df['target'] = data.target
+
+print(f"Dataset shape: {df.shape}")
+print(f"Classes: {np.unique(df['target'])}")
+
+# Split data
+X_train, X_test, y_train, y_test = train_test_split(
+    df[data.feature_names], df['target'],
+    test_size=0.2, random_state=42
+)
+
+# Train model
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
+
+# Evaluate
+y_pred = model.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+print(f"\nAccuracy: {accuracy:.4f}")
+print(f"\nClassification Report:\n{classification_report(y_test, y_pred, target_names=data.target_names)}")
+
+# Save model
+model_dir = "/mnt/models"
+os.makedirs(model_dir, exist_ok=True)
+model_path = os.path.join(model_dir, "wine-classifier.joblib")
+joblib.dump(model, model_path)
+print(f"\nModel saved to {model_path}")
+PYEOF
+----
+
+=== Step 4: Run the Training Job
+
+[source,bash,role="execute"]
+----
+cat <<'EOF' | oc apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: wine-training
+  namespace: wine-classifier
+spec:
+  template:
+    spec:
+      containers:
+      - name: trainer
+        image: registry.redhat.io/ubi9/python-311:latest
+        command:
+        - bash
+        - -c
+        - |
+          pip install scikit-learn joblib pandas numpy && \
+          python /scripts/train.py
+        volumeMounts:
+        - name: training-script
+          mountPath: /scripts
+        - name: model-storage
+          mountPath: /mnt/models
+      volumes:
+      - name: training-script
+        configMap:
+          name: wine-training-script
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: wine-model-pvc
+      restartPolicy: Never
+  backoffLimit: 2
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wine-model-pvc
+  namespace: wine-classifier
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+----
+
+=== Step 5: Wait for Training to Complete
+
+[source,bash,role="execute"]
+----
+oc wait --for=condition=complete job/wine-training -n wine-classifier --timeout=300s
+----
+
+View the training output:
+
+[source,bash,role="execute"]
+----
+oc logs job/wine-training -n wine-classifier
+----
+
+You should see the model accuracy and classification report printed to the log.
+
+=== Step 6: Deploy the Model Using RHOAI Model Serving
+
+Create an InferenceService to serve the trained wine classifier:
+
+[source,bash,role="execute"]
+----
+cat <<'EOF' | oc apply -f -
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: wine-classifier
+  namespace: wine-classifier
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+  labels:
+    opendatahub.io/dashboard: "true"
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: sklearn
+      runtime: kserve-sklearnserver
+      storageUri: pvc://wine-model-pvc/
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+EOF
+----
+
+=== Step 7: Wait for the InferenceService to Become Ready
+
+[source,bash,role="execute"]
+----
+oc wait --for=condition=Ready inferenceservice/wine-classifier -n wine-classifier --timeout=300s
+----
+
+=== Verify: Exercise 5
+
+[source,bash,role="execute"]
+----
+oc get inferenceservice wine-classifier -n wine-classifier
+----
+
+Expected output:
+
+----
+NAME              URL                                                           READY   PREV   LATEST   AGE
+wine-classifier   https://wine-classifier-wine-classifier.apps.cluster...      True             100      2m
+----
+
+Test the inference endpoint:
+
+[source,bash,role="execute"]
+----
+INFERENCE_URL=$(oc get inferenceservice wine-classifier -n wine-classifier -o jsonpath='{.status.url}')
+
+curl -sk "${INFERENCE_URL}/v1/models/wine-classifier:predict" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instances": [[13.72, 1.43, 2.50, 16.7, 108, 3.40, 3.67, 0.19, 2.04, 6.8, 0.89, 2.87, 1285]]
+  }'
+----
+
+You should see a JSON response with the predicted wine class.
+
+== Exercise 6: Register the Wine Classifier in Model Registry
+
+The RHOAI model registry provides a centralized catalog of trained models with versioning, metadata, and lifecycle management.
+
+=== Step 1: Verify Model Registry Is Available
+
+[source,bash,role="execute"]
+----
+oc get pods -n redhat-ods-applications -l app=model-registry
+----
+
+=== Step 2: Register the Model
+
+[source,bash,role="execute",subs="attributes"]
+----
+MODEL_REGISTRY_ROUTE={model_registry_url}
+
+# Create a registered model
+curl -sk -X POST "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "wine-quality-classifier",
+    "description": "Random Forest classifier for wine quality prediction. Trained on the UCI Wine dataset with 13 chemical property features. Achieves >95% accuracy on the test set.",
+    "customProperties": {
+      "framework": {"string_value": "scikit-learn"},
+      "task": {"string_value": "classification"},
+      "owner": {"string_value": "data-scientists"}
+    }
+  }'
+----
+
+=== Step 3: Create a Model Version
+
+[source,bash,role="execute",subs="attributes"]
+----
+# Get the registered model ID
+REGISTERED_MODEL_ID=$(curl -sk "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models?name=wine-quality-classifier" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['items'][0]['id'])")
+
+echo "Registered Model ID: ${REGISTERED_MODEL_ID}"
+
+# Create a model version
+curl -sk -X POST "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"name\": \"v1.0.0\",
+    \"registeredModelId\": \"${REGISTERED_MODEL_ID}\",
+    \"description\": \"Initial training run. RandomForest with 100 estimators, random_state=42.\",
+    \"customProperties\": {
+      \"accuracy\": {\"string_value\": \"0.97\"},
+      \"n_estimators\": {\"int_value\": \"100\"},
+      \"training_data\": {\"string_value\": \"UCI Wine dataset\"},
+      \"serving_runtime\": {\"string_value\": \"kserve-sklearnserver\"}
+    }
+  }"
+----
+
+=== Step 4: Create a Model Artifact
+
+[source,bash,role="execute",subs="attributes"]
+----
+MODEL_VERSION_ID=$(curl -sk "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions?name=v1.0.0" \
+  | python3 -c "import sys,json; items=json.load(sys.stdin)['items']; print(items[0]['id'])")
+
+echo "Model Version ID: ${MODEL_VERSION_ID}"
+
+curl -sk -X POST "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions/${MODEL_VERSION_ID}/artifacts" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "wine-classifier-sklearn",
+    "artifactType": "model-artifact",
+    "uri": "pvc://wine-model-pvc/wine-classifier.joblib",
+    "modelFormatName": "sklearn",
+    "modelFormatVersion": "1.3",
+    "description": "Serialized RandomForest model in joblib format"
+  }'
+----
+
+=== Verify: Exercise 6
+
+[source,bash,role="execute",subs="attributes"]
+----
+curl -sk "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models" \
+  | python3 -m json.tool
+----
+
+You should see the `wine-quality-classifier` model listed with its custom properties.
+
+[source,bash,role="execute",subs="attributes"]
+----
+curl -sk "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions" \
+  | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for item in data.get('items', []):
+    print(f\"Version: {item['name']}, Model ID: {item['registeredModelId']}\")
+"
+----
+
+Expected output:
+
+----
+Version: v1.0.0, Model ID: 1
+----
+
+You can also verify the registration in the RHOAI Dashboard by navigating to **Model Registry** in the left sidebar at:
+
+{rhoai_dashboard_url}
+
+== Reference: MLOps RBAC Surface Area
+
+RHOAI RBAC spans multiple subsystems, each with its own authorization model. The following table provides a comprehensive reference for the RBAC surfaces that platform administrators must understand and configure.
+
+[cols="2,2,3,2",options="header"]
+|===
+|Subsystem |Resource Type |RBAC Mechanism |Key Groups/Roles
+
+|*RHOAI Dashboard*
+|Dashboard access, settings
+|Auth CR (`adminGroups`, `allowedGroups`)
+|`rhods-admins`, `rhods-users`
+
+|*Data Science Projects*
+|Namespaces, workbenches, pipelines
+|OpenShift RBAC (`RoleBinding` in namespace)
+|`admin`, `edit`, `view` ClusterRoles
+
+|*Workbenches (Notebooks)*
+|Notebook CR lifecycle
+|Custom ClusterRoles with `opendatahub.io/role-type` label
+|`workbench-maintainer`, `workbench-reader`, `workbench-operator`, `workbench-editor`
+
+|*Model Serving (KServe)*
+|InferenceService, ServingRuntime
+|OpenShift RBAC in serving namespace
+|`admin`, `edit` for create/update; `view` for read-only
+
+|*Model Serving (ModelMesh)*
+|InferenceService, ServingRuntime
+|OpenShift RBAC in serving namespace
+|Same as KServe; namespace-scoped
+
+|*Model Registry*
+|RegisteredModel, ModelVersion, ModelArtifact
+|Model Registry RBAC (namespace-scoped)
+|Tied to namespace `RoleBinding`; no separate auth model
+
+|*Pipelines (Data Science Pipelines)*
+|PipelineRun, Pipeline definitions
+|OpenShift RBAC + DSP namespace access
+|`admin`/`edit` for pipeline creation; `view` for run monitoring
+
+|*Distributed Workloads (Kueue)*
+|ClusterQueue, LocalQueue, Workload
+|Kueue RBAC (ClusterRole for queue admin)
+|Cluster-scoped for ClusterQueue; namespace-scoped for LocalQueue/Workload
+
+|*TrustyAI*
+|TrustyAIService, bias/explainability data
+|OpenShift RBAC in TrustyAI namespace
+|`admin`/`edit` for configuration; `view` for dashboard access
+
+|*Model Monitoring*
+|ModelMonitor, metrics endpoints
+|OpenShift RBAC + Prometheus RBAC
+|`monitoring-edit` for alert rules; `view` for dashboard access
+
+|*Custom Serving Runtimes*
+|ServingRuntime (cluster-scoped)
+|Cluster admin or delegated ClusterRole
+|Typically restricted to `rhods-admins`; runtime selection available to project `edit` role
+|===
+
+[CAUTION]
+====
+This table covers the primary RBAC surfaces as of RHOAI 3.5. Additional subsystems (guardrails, evaluation hub) are in Technology Preview and may introduce their own authorization models. Always consult the https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5[RHOAI 3.5 documentation] for the latest RBAC guidance.
+====
+
+[WARNING]
+====
+The `cluster-admin` ClusterRole bypasses all RBAC checks. Avoid granting it to data science users. Instead, use the minimum set of roles described above to implement least-privilege access.
+====
+
+== Module Summary
+
+In this module you:
+
+* Deployed FreeIPA in-cluster as an LDAP directory and populated it with persona-based users and groups (data scientists, data engineers, ML engineers)
+* Configured OpenShift to authenticate against FreeIPA via LDAP and synced groups into OpenShift
+* Configured Keycloak as an OIDC identity provider for federated authentication
+* Configured the RHOAI Auth CR with `rhods-admins` and `rhods-users` groups to control dashboard access
+* Created custom workbench roles (Maintainer, Reader, Operator, Editor) for fine-grained notebook access control
+* Built and served a wine quality classifier using Feature Store (Feast) patterns and KServe model serving
+* Registered the trained model in the RHOAI model registry with version metadata and artifact references
+* Reviewed the full RBAC surface area across 11 RHOAI subsystems
+
+Proceed to xref:04-module-03-models-assets-scale.adoc[Module 3: Managing Models and Assets at Scale].

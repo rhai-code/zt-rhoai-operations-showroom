@@ -1,0 +1,65 @@
+= Getting Connected
+:navtitle: Getting Connected
+
+== Environment Access
+
+Your workshop environment is pre-provisioned from the RHOAI Deploy & Configure workshop. Use the credentials below to access your cluster.
+
+=== OpenShift Console
+
+Open the OpenShift web console at:
+
+{openshift_console_url}
+
+Log in with:
+
+* **Username**: `{user}`
+* **Password**: `{password}`
+
+=== OpenShift CLI
+
+Open the terminal on the right side of this page and log into OpenShift:
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc login -u {user} -p {password} {openshift_api_url}
+----
+
+=== Verify RHOAI Is Running
+
+Confirm that the RHOAI operator and DataScienceCluster are healthy:
+
+[source,bash,role="execute"]
+----
+oc get datasciencecluster -A
+----
+
+You should see a DataScienceCluster resource with `Phase: Ready`.
+
+[source,bash,role="execute"]
+----
+oc get csv -n redhat-ods-operator | grep rhods
+----
+
+Confirm the RHOAI operator CSV shows `Succeeded`.
+
+=== RHOAI Dashboard
+
+Open the RHOAI dashboard at:
+
+{rhoai_dashboard_url}
+
+Verify you can see the dashboard home page with the navigation sidebar.
+
+=== Create Your Working Project
+
+Create a project for the workshop exercises:
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc new-project {project_name}
+----
+
+== Ready
+
+Your environment is ready. Proceed to xref:02-module-01-operations-patterns.adoc[Module 1: Operations Guidelines and Patterns].

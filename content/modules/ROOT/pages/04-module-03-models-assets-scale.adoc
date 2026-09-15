@@ -1,0 +1,951 @@
+= Module 3: Managing Models and Assets at Scale
+:navtitle: Managing Models and Assets at Scale
+
+== Learning Objectives
+
+By the end of this module you will be able to:
+
+* Build a custom workbench image and import it into RHOAI via an ImageStream CRD
+* Build a ModelCar OCI container image using Podman and deploy it with KServe
+* Register a model in the RHOAI model registry and inspect its metadata
+* Explain Kueue resource management concepts: ClusterQueues, LocalQueues, ResourceFlavors, and Cohorts
+* Describe MIG, dynamic MIG, and DRA GPU partitioning strategies
+* Describe llm-d serving topologies including single-node, multi-node data parallelism, prefill/decode disaggregation, and WideEP
+* Inspect and describe hardware profiles with node selectors, taints, and tolerations
+
+== Estimated Duration
+
+90--120 minutes
+
+'''
+
+== Exercise 1: Build and Import a Custom Workbench Image
+
+In this exercise you will create a custom workbench image based on the RHOAI Jupyter minimal image, add Python packages for a specific workflow, and import it into the RHOAI dashboard using an ImageStream CRD.
+
+=== 1.1 Inspect the Base Workbench Images
+
+First, review the existing workbench images that ship with RHOAI:
+
+[source,bash,role="execute"]
+----
+oc get imagestreams -n redhat-ods-applications -l opendatahub.io/notebook-image=true
+----
+
+You should see output similar to:
+
+[source,text]
+----
+NAME                             IMAGE REPOSITORY                                                                          TAGS
+jupyter-minimal-notebook         image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/jupyter-minimal   2024.2
+jupyter-datascience-notebook     image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/jupyter-datascience   2024.2
+code-server-notebook             image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/code-server       2024.2
+----
+
+=== 1.2 Create the Custom Workbench Containerfile
+
+Create a working directory and write a Containerfile that extends the minimal Jupyter image with additional packages:
+
+[source,bash,role="execute",subs="attributes"]
+----
+mkdir -p /tmp/custom-workbench-{guid}
+----
+
+[source,bash,role="execute",subs="attributes"]
+----
+cat > /tmp/custom-workbench-{guid}/Containerfile <<'EOF'
+FROM image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/jupyter-minimal-notebook:2024.2
+
+USER 0
+
+RUN pip install --no-cache-dir \
+    scikit-learn==1.5.2 \
+    pandas==2.2.3 \
+    matplotlib==3.9.2 \
+    mlflow-skinny==2.17.2 \
+    boto3==1.35.0
+
+USER 1001
+
+LABEL io.openshift.s2i.build.image="custom-ml-workbench" \
+      io.openshift.s2i.build.version="1.0"
+EOF
+----
+
+=== 1.3 Build the Image Using the OpenShift Build System
+
+Since our lab environment may not have direct Podman access with socket forwarding, use an OpenShift BuildConfig to build the image inside the cluster:
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc new-build --name=custom-ml-workbench \
+  --binary=true \
+  --strategy=docker \
+  --to='custom-ml-workbench:1.0' \
+  -n {project_name}
+----
+
+Start the build by uploading the Containerfile:
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc start-build custom-ml-workbench \
+  --from-dir=/tmp/custom-workbench-{guid} \
+  --follow \
+  -n {project_name}
+----
+
+[NOTE]
+====
+The build will take 3-5 minutes. The `--follow` flag streams the build logs so you can monitor progress. If the build times out, check the build pod logs with `oc logs -f bc/custom-ml-workbench -n {project_name}`.
+====
+
+=== 1.4 Create the ImageStream CRD for RHOAI
+
+Create an ImageStream in the `redhat-ods-applications` namespace with the labels that tell the RHOAI dashboard to display it as an available workbench image:
+
+[source,bash,role="execute",subs="attributes"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: custom-ml-workbench
+  namespace: redhat-ods-applications
+  labels:
+    opendatahub.io/notebook-image: "true"
+  annotations:
+    opendatahub.io/notebook-image-name: "Custom ML Workbench"
+    opendatahub.io/notebook-image-desc: "Jupyter minimal + scikit-learn, pandas, matplotlib, MLflow"
+    opendatahub.io/notebook-image-order: "100"
+spec:
+  lookupPolicy:
+    local: true
+  tags:
+    - name: "1.0"
+      from:
+        kind: DockerImage
+        name: image-registry.openshift-image-registry.svc:5000/{project_name}/custom-ml-workbench:1.0
+      importPolicy:
+        importMode: Legacy
+      referencePolicy:
+        type: Source
+EOF
+----
+
+[IMPORTANT]
+====
+The label `opendatahub.io/notebook-image: "true"` is what causes the RHOAI dashboard to display the image in the workbench creation form. The annotations control the display name, description, and sort order.
+====
+
+=== 1.5 Verify the Custom Image Appears in the Dashboard
+
+Confirm the ImageStream was created with the correct labels:
+
+[source,bash,role="execute"]
+----
+oc get imagestream custom-ml-workbench -n redhat-ods-applications -o jsonpath='{.metadata.labels}' | python3 -m json.tool
+----
+
+Expected output:
+
+[source,json]
+----
+{
+    "opendatahub.io/notebook-image": "true"
+}
+----
+
+List all workbench images now visible to the dashboard:
+
+[source,bash,role="execute"]
+----
+oc get imagestreams -n redhat-ods-applications -l opendatahub.io/notebook-image=true -o custom-columns='NAME:.metadata.name,DISPLAY:.metadata.annotations.opendatahub\.io/notebook-image-name'
+----
+
+You should see your `custom-ml-workbench` in the list with display name "Custom ML Workbench".
+
+[NOTE]
+====
+**Showing and hiding workbench images**: To hide a workbench image from the dashboard without deleting it, set the label to `"false"`:
+
+[source,bash,role="execute"]
+----
+oc label imagestream custom-ml-workbench -n redhat-ods-applications opendatahub.io/notebook-image=false --overwrite
+----
+
+To make it visible again:
+
+[source,bash,role="execute"]
+----
+oc label imagestream custom-ml-workbench -n redhat-ods-applications opendatahub.io/notebook-image=true --overwrite
+----
+====
+
+'''
+
+== Exercise 2: Build a ModelCar OCI Container with Podman
+
+A ModelCar is a lightweight OCI container image that packages model weights and metadata for deployment. KServe can pull model artifacts directly from an OCI registry, avoiding the need for S3 storage in some deployments.
+
+=== 2.1 Create the Model Artifacts
+
+For this exercise you will create a small scikit-learn model, serialize it, and package it as a ModelCar container.
+
+Create the model training script:
+
+[source,bash,role="execute",subs="attributes"]
+----
+mkdir -p /tmp/modelcar-{guid}
+----
+
+[source,bash,role="execute",subs="attributes"]
+----
+cat > /tmp/modelcar-{guid}/train_model.py <<'PYEOF'
+import pickle
+from sklearn.datasets import load_iris
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+
+X, y = load_iris(return_X_y=True)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+model = RandomForestClassifier(n_estimators=10, random_state=42)
+model.fit(X_train, y_train)
+accuracy = model.score(X_test, y_test)
+print(f"Model accuracy: {accuracy:.4f}")
+
+with open("/tmp/model/model.pkl", "wb") as f:
+    pickle.dump(model, f)
+print("Model saved to /tmp/model/model.pkl")
+PYEOF
+----
+
+Train the model and save the artifact:
+
+[source,bash,role="execute",subs="attributes"]
+----
+mkdir -p /tmp/modelcar-{guid}/model
+python3 -c "
+import pickle
+from sklearn.datasets import load_iris
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+X, y = load_iris(return_X_y=True)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+clf = RandomForestClassifier(n_estimators=10, random_state=42)
+clf.fit(X_train, y_train)
+print(f'Accuracy: {clf.score(X_test, y_test):.4f}')
+with open('/tmp/modelcar-{guid}/model/model.pkl', 'wb') as f:
+    pickle.dump(clf, f)
+print('Model saved.')
+"
+----
+
+[NOTE]
+====
+If `scikit-learn` is not available in the terminal environment, you can create a placeholder model file for the container build:
+
+[source,bash,role="execute",subs="attributes"]
+----
+echo '{"placeholder": "iris-rf-model"}' > /tmp/modelcar-{guid}/model/model.pkl
+----
+
+The important part of this exercise is the ModelCar container packaging workflow.
+====
+
+=== 2.2 Write the ModelCar Containerfile
+
+The ModelCar Containerfile uses `scratch` as the base image because it only needs to contain the model artifacts -- no runtime is required:
+
+[source,bash,role="execute",subs="attributes"]
+----
+cat > /tmp/modelcar-{guid}/Containerfile <<'EOF'
+FROM scratch
+
+COPY model/ /models/iris-classifier/
+
+LABEL org.opencontainers.image.title="iris-classifier-modelcar" \
+      org.opencontainers.image.description="Iris RandomForest classifier packaged as ModelCar" \
+      org.opencontainers.image.version="1.0.0" \
+      ai.kserve.modelcar="true"
+EOF
+----
+
+=== 2.3 Build the ModelCar Image
+
+Build the container using an OpenShift Build (since direct Podman socket access varies by environment):
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc new-build --name=iris-modelcar \
+  --binary=true \
+  --strategy=docker \
+  --to='iris-modelcar:1.0' \
+  -n {project_name}
+----
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc start-build iris-modelcar \
+  --from-dir=/tmp/modelcar-{guid} \
+  --follow \
+  -n {project_name}
+----
+
+=== 2.4 Deploy the ModelCar with KServe
+
+Create an InferenceService that references the ModelCar OCI image as its storage source:
+
+[source,bash,role="execute",subs="attributes"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: iris-modelcar
+  namespace: {project_name}
+  annotations:
+    serving.kserve.io/deploymentMode: RawDeployment
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: sklearn
+      runtime: kserve-sklearnserver
+      storageUri: "oci://image-registry.openshift-image-registry.svc:5000/{project_name}/iris-modelcar:1.0"
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "512Mi"
+        limits:
+          cpu: "1"
+          memory: "1Gi"
+EOF
+----
+
+[NOTE]
+====
+The `storageUri` uses the `oci://` protocol prefix, which tells KServe to pull model artifacts from an OCI container image rather than from S3 or PVC storage. This is the ModelCar pattern.
+====
+
+=== 2.5 Verify the ModelCar Deployment
+
+Check that the InferenceService reaches a ready state:
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc get inferenceservice iris-modelcar -n {project_name}
+----
+
+Expected output (after 1--2 minutes):
+
+[source,text]
+----
+NAME            URL                                                     READY   PREV   LATEST   AGE
+iris-modelcar   http://iris-modelcar.rhoai-ops.svc.cluster.local        True           100      90s
+----
+
+[WARNING]
+====
+On a CPU-only cluster, the InferenceService may take longer to become ready because the sklearn serving runtime needs to initialize without GPU acceleration. If the service does not reach `READY=True` within 5 minutes, check the predictor pod logs:
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc logs -l serving.kserve.io/inferenceservice=iris-modelcar -n {project_name} --tail=50
+----
+====
+
+'''
+
+== Exercise 3: Register a Model in the Model Registry
+
+The RHOAI model registry provides a centralized catalog of trained models with version tracking, metadata, and lineage. In this exercise you will register the Iris classifier from Exercise 2.
+
+=== 3.1 Verify the Model Registry Is Available
+
+Check that the model registry component is enabled in your DataScienceCluster:
+
+[source,bash,role="execute"]
+----
+oc get datasciencecluster -A -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.components.modelregistry.managementState}{"\n"}{end}'
+----
+
+Expected output:
+
+[source,text]
+----
+default-dsc	Managed
+----
+
+Confirm the model registry pods are running:
+
+[source,bash,role="execute"]
+----
+oc get pods -n redhat-ods-applications -l app=model-registry
+----
+
+=== 3.2 Get the Model Registry REST Endpoint
+
+Retrieve the model registry route:
+
+[source,bash,role="execute"]
+----
+MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
+echo "Model Registry: https://${MODEL_REGISTRY_ROUTE}"
+----
+
+=== 3.3 Register a New Model
+
+Create a registered model entry using the REST API:
+
+[source,bash,role="execute"]
+----
+MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
+
+curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "iris-classifier",
+    "description": "Random Forest classifier trained on the Iris dataset",
+    "customProperties": {
+      "framework": { "string_value": "scikit-learn" },
+      "task": { "string_value": "classification" },
+      "accuracy": { "string_value": "0.9667" }
+    }
+  }'
+----
+
+=== 3.4 Create a Model Version
+
+Add a version to the registered model:
+
+[source,bash,role="execute"]
+----
+MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
+
+# Get the registered model ID
+MODEL_ID=$(curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models?name=iris-classifier" | python3 -c "import sys,json; print(json.load(sys.stdin)['items'][0]['id'])")
+echo "Registered Model ID: ${MODEL_ID}"
+
+curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"name\": \"v1.0\",
+    \"registeredModelId\": \"${MODEL_ID}\",
+    \"description\": \"Initial training run - 10 estimators, accuracy 0.9667\",
+    \"customProperties\": {
+      \"n_estimators\": { \"int_value\": \"10\" },
+      \"test_split\": { \"string_value\": \"0.2\" }
+    }
+  }"
+----
+
+=== 3.5 Create a Model Artifact
+
+Link the model artifact location to the version:
+
+[source,bash,role="execute",subs="attributes"]
+----
+MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
+
+# Get the model version ID
+VERSION_ID=$(curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions?name=v1.0" | python3 -c "import sys,json; items=json.load(sys.stdin)['items']; print(items[0]['id'])")
+echo "Model Version ID: ${VERSION_ID}"
+
+curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_artifacts" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"name\": \"iris-classifier-pkl\",
+    \"modelVersionId\": \"${VERSION_ID}\",
+    \"description\": \"Pickle serialized RandomForest model\",
+    \"uri\": \"oci://image-registry.openshift-image-registry.svc:5000/{project_name}/iris-modelcar:1.0\",
+    \"modelFormatName\": \"sklearn\",
+    \"modelFormatVersion\": \"1.5.2\",
+    \"artifactType\": \"model-artifact\"
+  }"
+----
+
+=== 3.6 Verify Model Registration
+
+List all registered models:
+
+[source,bash,role="execute"]
+----
+MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
+
+curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models" | python3 -m json.tool
+----
+
+You should see your `iris-classifier` model with its metadata and custom properties.
+
+List versions for the model:
+
+[source,bash,role="execute"]
+----
+MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
+
+MODEL_ID=$(curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models?name=iris-classifier" | python3 -c "import sys,json; print(json.load(sys.stdin)['items'][0]['id'])")
+
+curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models/${MODEL_ID}/versions" | python3 -m json.tool
+----
+
+'''
+
+== Conceptual Section: Kueue GPU Scheduling
+
+[NOTE]
+====
+This section is conceptual. The lab cluster does not have GPUs, so you will inspect Kueue CRDs and understand the architecture without creating actual GPU workloads.
+====
+
+=== What Is Kueue?
+
+Kueue is a Kubernetes-native job queuing system that manages resource quotas and fair scheduling for batch workloads. In RHOAI, Kueue is essential for managing GPU access across teams and projects.
+
+Kueue operates through four key CRDs:
+
+[cols="1,3"]
+|===
+|CRD |Purpose
+
+|**ResourceFlavor**
+|Defines a type of resource (e.g., `nvidia-a100-40gb`, `nvidia-l4`, `cpu-only`). Maps to node labels so Kueue knows which nodes provide which hardware.
+
+|**ClusterQueue**
+|A cluster-scoped queue that defines resource quotas. Specifies how many resources of each flavor are available and borrowing limits.
+
+|**LocalQueue**
+|A namespace-scoped queue that points to a ClusterQueue. Users submit workloads to a LocalQueue; Kueue routes them to the backing ClusterQueue.
+
+|**Cohort**
+|A logical grouping of ClusterQueues that can borrow resources from each other. Enables cross-team resource sharing with guaranteed minimums.
+|===
+
+=== Inspect Kueue Installation
+
+Check whether the Kueue operator is installed:
+
+[source,bash,role="execute"]
+----
+oc get csv -A | grep kueue
+----
+
+List any existing Kueue CRDs:
+
+[source,bash,role="execute"]
+----
+oc get crd | grep kueue
+----
+
+Expected CRDs include:
+
+[source,text]
+----
+clusterqueues.kueue.x-k8s.io
+localqueues.kueue.x-k8s.io
+resourceflavors.kueue.x-k8s.io
+workloads.kueue.x-k8s.io
+----
+
+=== Example: ResourceFlavor for GPU Nodes
+
+On a GPU-equipped cluster, a ResourceFlavor would look like this:
+
+[source,yaml]
+----
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: nvidia-a100-40gb
+spec:
+  nodeLabels:
+    nvidia.com/gpu.product: "NVIDIA-A100-SXM4-40GB"
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+----
+
+=== Example: ClusterQueue with Quotas and Borrowing
+
+A ClusterQueue defines the total resources available and the borrowing policy:
+
+[source,yaml]
+----
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: data-science-team
+spec:
+  cohort: "research-department"        # <1>
+  resourceGroups:
+    - coveredResources: ["cpu", "memory", "nvidia.com/gpu"]
+      flavors:
+        - name: nvidia-a100-40gb
+          resources:
+            - name: "nvidia.com/gpu"
+              nominalQuota: 4           # <2>
+              borrowingLimit: 2          # <3>
+            - name: "cpu"
+              nominalQuota: 32
+            - name: "memory"
+              nominalQuota: 128Gi
+  preemption:
+    withinClusterQueue: LowerPriority
+    reclaimWithinCohort: Any
+----
+<1> Cohort membership enables borrowing from other ClusterQueues in the same cohort
+<2> Guaranteed quota: 4 GPUs always available to this team
+<3> Can borrow up to 2 additional GPUs from the cohort when other teams have idle resources
+
+=== Example: LocalQueue in a User Namespace
+
+Users interact with LocalQueues, not ClusterQueues:
+
+[source,yaml]
+----
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: LocalQueue
+metadata:
+  name: team-queue
+  namespace: ds-project-alpha
+spec:
+  clusterQueue: data-science-team
+----
+
+=== Inspect Existing Queues
+
+List all ClusterQueues and their status:
+
+[source,bash,role="execute"]
+----
+oc get clusterqueues -o custom-columns='NAME:.metadata.name,COHORT:.spec.cohort,PENDING:.status.pendingWorkloads,ADMITTED:.status.admittedWorkloads' 2>/dev/null || echo "No ClusterQueues found (expected on a CPU-only cluster)"
+----
+
+List LocalQueues across all namespaces:
+
+[source,bash,role="execute"]
+----
+oc get localqueues -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,CLUSTER_QUEUE:.spec.clusterQueue' 2>/dev/null || echo "No LocalQueues found (expected on a CPU-only cluster)"
+----
+
+'''
+
+== Conceptual Section: MIG, Dynamic MIG, and DRA
+
+[NOTE]
+====
+This section describes GPU partitioning technologies. These concepts are important for planning RHOAI deployments but cannot be demonstrated on a CPU-only cluster.
+====
+
+=== Multi-Instance GPU (MIG)
+
+NVIDIA Multi-Instance GPU (MIG) allows a single physical GPU to be partitioned into up to seven isolated instances, each with its own memory, cache, and compute resources.
+
+[cols="1,2,2"]
+|===
+|MIG Profile |GPU Memory |Use Case
+
+|`1g.5gb`
+|5 GB
+|Small inference workloads, notebook exploration
+
+|`2g.10gb`
+|10 GB
+|Medium model training, batch inference
+
+|`3g.20gb`
+|20 GB
+|Large model fine-tuning
+
+|`4g.20gb`
+|20 GB
+|Higher compute, same memory as 3g
+
+|`7g.40gb`
+|40 GB (full GPU)
+|Full GPU for largest workloads
+|===
+
+MIG provides hardware-level isolation -- each instance has guaranteed memory bandwidth and compute, unlike time-slicing which shares resources.
+
+=== Dynamic MIG
+
+Dynamic MIG (available through the NVIDIA GPU Operator) enables on-the-fly reconfiguration of MIG partitions based on workload demand. Key benefits:
+
+* **Automatic partitioning**: The GPU Operator watches for pod resource requests and reconfigures MIG profiles to match
+* **No node drain required**: Partitions are adjusted without evicting existing workloads (when possible)
+* **Strategy-based**: Administrators define a `MIGStrategy` (e.g., `mixed` or `single`) on the ClusterPolicy
+
+=== Dynamic Resource Allocation (DRA)
+
+DRA is a Kubernetes-native mechanism (GA in Kubernetes 1.32) that replaces device plugins for GPU scheduling. In OpenShift 4.17+:
+
+* **ResourceClaim**: A pod-level request for a specific GPU resource
+* **ResourceClaimTemplate**: Reusable templates for common GPU configurations
+* **DeviceClass**: Cluster-level definitions of available device types
+
+DRA provides richer scheduling semantics than the traditional device plugin approach, including support for structured parameters and multi-device allocation.
+
+[IMPORTANT]
+====
+DRA support in RHOAI is under active development. Check the https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5[RHOAI 3.5 release notes] for the latest support status.
+====
+
+'''
+
+== Conceptual Section: llm-d Serving Topologies and the EPP Scheduler
+
+llm-d (formerly vLLM-d) is the distributed LLM serving stack integrated into RHOAI for large-scale model deployments. Understanding its deployment topologies is critical for operations planning.
+
+=== Deployment Topologies
+
+==== Single-Node Deployment
+
+The simplest topology. A single vLLM instance serves the model from one node.
+
+* **Best for**: Models that fit in a single GPU's memory (7B--13B parameter models on A100-80GB)
+* **Scaling**: Horizontal pod autoscaling adds replicas on separate nodes
+* **Limitation**: Cannot serve models larger than single-node GPU memory
+
+==== Multi-Node Data Parallelism (DP)
+
+Multiple replicas of the full model run independently across nodes. A load balancer distributes requests.
+
+* **Best for**: High-throughput inference with models that fit on a single node
+* **Scaling**: Each replica handles requests independently
+* **Trade-off**: No memory aggregation -- each node must hold the full model
+
+==== Prefill/Decode Disaggregation (PD Disaggregation)
+
+Separates the two phases of LLM inference into specialized worker pools:
+
+* **Prefill workers**: Process the input prompt (compute-intensive, high memory bandwidth)
+* **Decode workers**: Generate output tokens one at a time (latency-sensitive, lower compute)
+
+This topology enables:
+
+* Independent scaling of prefill and decode capacity
+* Hardware optimization (high-bandwidth GPUs for prefill, lower-cost GPUs for decode)
+* Reduced time-to-first-token (TTFT) under high load
+
+==== WideEP (Wide Expert Parallelism)
+
+For Mixture-of-Experts (MoE) models like Mixtral, WideEP distributes expert layers across nodes:
+
+* **Expert parallelism**: Different experts run on different GPUs/nodes
+* **All-to-all communication**: Tokens are routed to the appropriate expert via high-speed interconnect
+* **Best for**: MoE models where expert layers exceed single-node memory
+
+=== Endpoint Picker Pod (EPP)
+
+The EPP is the intelligent request router in llm-d deployments:
+
+* **KV-cache-aware routing**: Directs requests to the replica most likely to have relevant KV cache entries, reducing redundant computation
+* **Load-aware scheduling**: Considers GPU memory utilization, queue depth, and active request count
+* **Session affinity**: Multi-turn conversations route to the same replica for cache reuse
+* **Health monitoring**: Removes unhealthy replicas from the routing pool
+
+=== Batch Inference
+
+llm-d supports batch inference for processing large datasets:
+
+* **Offline batch jobs**: Submit a file of prompts and receive a file of completions
+* **Priority scheduling**: Batch jobs run at lower priority than real-time serving
+* **Integration**: Works with Kueue for GPU quota management
+
+=== Flow Control and Autoscaling
+
+[cols="1,3"]
+|===
+|Mechanism |Description
+
+|**Request queuing**
+|EPP queues requests when all replicas are at capacity, with configurable queue depth and timeout
+
+|**Token-level throttling**
+|Rate limiting based on tokens-per-second rather than requests-per-second
+
+|**KPA (Knative Pod Autoscaler)**
+|Scales replicas based on concurrency or RPS targets
+
+|**HPA with custom metrics**
+|Scales based on GPU utilization, queue depth, or KV cache pressure via Prometheus metrics
+
+|**Scale-to-zero**
+|Supported with Knative Serving; cold start adds latency for first request
+|===
+
+'''
+
+== Exercise 4: Inspect Hardware Profiles
+
+Hardware profiles in RHOAI define the resource configurations available when creating workbenches and model serving runtimes. They use node selectors, taints, and tolerations to target workloads to specific hardware.
+
+=== 4.1 List Existing Hardware Profiles
+
+Inspect the hardware profiles configured in the RHOAI dashboard settings:
+
+[source,bash,role="execute"]
+----
+oc get acceleratorprofiles -n redhat-ods-applications -o yaml 2>/dev/null || echo "No AcceleratorProfile CRDs found"
+----
+
+Check for the newer HardwareProfile CRD (RHOAI 3.5+):
+
+[source,bash,role="execute"]
+----
+oc get hardwareprofiles -n redhat-ods-applications -o yaml 2>/dev/null || echo "No HardwareProfile CRDs found"
+----
+
+=== 4.2 Understand the Hardware Profile Structure
+
+A hardware profile defines compute resources and hardware targeting. Here is an example for a CPU-only workbench:
+
+[source,yaml]
+----
+apiVersion: dashboard.opendatahub.io/v1alpha1
+kind: HardwareProfile
+metadata:
+  name: cpu-small
+  namespace: redhat-ods-applications
+spec:
+  displayName: "Small CPU"
+  description: "2 CPU cores, 4Gi memory - suitable for data exploration"
+  enabled: true
+  identifiers:
+    - displayName: CPU
+      identifier: cpu
+      defaultCount: 2
+      minCount: 1
+      maxCount: 4
+    - displayName: Memory
+      identifier: memory
+      defaultCount: 4
+      minCount: 2
+      maxCount: 8
+      units: Gi
+  nodeSelectors:
+    node-role.kubernetes.io/worker: ""
+  tolerations: []
+----
+
+And here is an example for a GPU workbench (conceptual -- not applied on this cluster):
+
+[source,yaml]
+----
+apiVersion: dashboard.opendatahub.io/v1alpha1
+kind: HardwareProfile
+metadata:
+  name: gpu-a100
+  namespace: redhat-ods-applications
+spec:
+  displayName: "NVIDIA A100 GPU"
+  description: "4 CPUs, 16Gi memory, 1 NVIDIA A100 GPU"
+  enabled: true
+  identifiers:
+    - displayName: CPU
+      identifier: cpu
+      defaultCount: 4
+      minCount: 2
+      maxCount: 8
+    - displayName: Memory
+      identifier: memory
+      defaultCount: 16
+      minCount: 8
+      maxCount: 64
+      units: Gi
+    - displayName: GPU
+      identifier: nvidia.com/gpu
+      defaultCount: 1
+      minCount: 1
+      maxCount: 4
+  nodeSelectors:
+    nvidia.com/gpu.product: "NVIDIA-A100-SXM4-40GB"
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+----
+
+=== 4.3 Inspect Node Labels and Taints
+
+Review the labels and taints on your cluster nodes to understand what hardware targeting is possible:
+
+[source,bash,role="execute"]
+----
+oc get nodes -o custom-columns='NAME:.metadata.name,ROLES:.metadata.labels.node-role\.kubernetes\.io/worker,CPU:.status.capacity.cpu,MEMORY:.status.capacity.memory'
+----
+
+Check for GPU-related labels (expected to be empty on this cluster):
+
+[source,bash,role="execute"]
+----
+oc get nodes -o json | python3 -c "
+import json,sys
+nodes = json.load(sys.stdin)['items']
+for node in nodes:
+    labels = node['metadata']['labels']
+    gpu_labels = {k:v for k,v in labels.items() if 'gpu' in k.lower() or 'nvidia' in k.lower()}
+    name = node['metadata']['name']
+    if gpu_labels:
+        print(f'{name}: {gpu_labels}')
+    else:
+        print(f'{name}: No GPU labels')
+"
+----
+
+Check for taints:
+
+[source,bash,role="execute"]
+----
+oc get nodes -o json | python3 -c "
+import json,sys
+nodes = json.load(sys.stdin)['items']
+for node in nodes:
+    name = node['metadata']['name']
+    taints = node['spec'].get('taints', [])
+    if taints:
+        for t in taints:
+            print(f'{name}: {t[\"key\"]}={t.get(\"value\",\"\")} ({t[\"effect\"]})')
+    else:
+        print(f'{name}: No taints')
+"
+----
+
+=== 4.4 Verify
+
+Confirm you can describe the relationship between hardware profiles, node selectors, and tolerations:
+
+[source,bash,role="execute"]
+----
+echo "=== Hardware Profile Summary ==="
+echo ""
+echo "Hardware profiles connect workbench/serving resource requests to physical hardware:"
+echo "  1. identifiers    -> Define CPU, memory, GPU quantities for the workload"
+echo "  2. nodeSelectors   -> Target nodes with matching labels (e.g., nvidia.com/gpu.product)"
+echo "  3. tolerations     -> Allow scheduling on tainted GPU nodes"
+echo ""
+echo "On this CPU-only cluster:"
+oc get nodes --no-headers | wc -l | xargs -I{} echo "  Nodes: {}"
+echo "  GPU labels: None detected"
+echo "  GPU taints: None detected"
+----
+
+'''
+
+== Module Summary
+
+In this module you:
+
+* **Built a custom workbench image** using OpenShift Builds and imported it into the RHOAI dashboard via an ImageStream CRD with the `opendatahub.io/notebook-image` label
+* **Created a ModelCar OCI container** packaging model weights in a `scratch`-based image, and deployed it using KServe with the `oci://` storage URI
+* **Registered a model** in the RHOAI model registry using the REST API, including model metadata, versioning, and artifact linking
+* **Explored Kueue GPU scheduling** concepts including ResourceFlavors, ClusterQueues, LocalQueues, and Cohorts for fair-share GPU resource management
+* **Reviewed GPU partitioning technologies** including MIG for hardware-level GPU isolation, dynamic MIG for on-demand reconfiguration, and DRA as the next-generation Kubernetes device allocation mechanism
+* **Examined llm-d serving topologies** from single-node to WideEP, the EPP scheduler for KV-cache-aware routing, and autoscaling strategies
+* **Inspected hardware profiles** and their relationship to node selectors, taints, and tolerations for targeting workloads to specific compute resources
+
+=== Next Steps
+
+Proceed to xref:05-module-04-upgrades.adoc[Module 4: Upgrades] to learn about the RHOAI operator upgrade lifecycle and dependent operator management.

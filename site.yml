@@ -1,0 +1,27 @@
+---
+site:
+  title: "RHOAI 3.5 Operations Workshop"
+  url: https://github.com/zt-rhoai-operations-showroom
+  start_page: modules::index.adoc
+
+content:
+  sources:
+    - url: .
+      start_path: content
+
+ui:
+  bundle:
+    url: https://github.com/rhpds/rhdp_showroom_theme/releases/download/summit-2026/ui-bundle.zip
+    snapshot: true
+  supplemental_files: ./content/supplemental-ui
+
+asciidoc:
+  attributes:
+    showroom-collection-version: v1.5.2
+
+antora:
+  extensions:
+    - require: ./content/lib/inject-buttons.js
+
+output:
+  dir: ./www

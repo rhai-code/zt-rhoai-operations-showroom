@@ -1,0 +1,26 @@
+* xref:index.adoc[Welcome]
+* xref:getting-connected.adoc[Getting Connected]
+
+.Module 1: Operations Patterns
+* xref:02-module-01-operations-patterns.adoc[Operations Guidelines and Patterns]
+
+.Module 2: Identity and Access
+* xref:03-module-02-idp-users-groups.adoc[IDP, Users & Group Management]
+
+.Module 3: Models and Assets
+* xref:04-module-03-models-assets-scale.adoc[Managing Models and Assets at Scale]
+
+.Module 4: Upgrades
+* xref:05-module-04-upgrades.adoc[Upgrades]
+
+.Module 5: Observability
+* xref:06-module-05-observe-debug.adoc[Observe & Debug]
+
+.Module 6: Backup & DR
+* xref:07-module-06-backups-dr.adoc[Backups & Disaster Recovery]
+
+.Appendix
+* xref:08-appendix-disconnected.adoc[Disconnected Considerations]
+
+.Wrap-up
+* xref:09-conclusion.adoc[Conclusion]

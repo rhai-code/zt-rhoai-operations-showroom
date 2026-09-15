@@ -1,0 +1,516 @@
+= Module 1: Operations Guidelines and Patterns
+:navtitle: Operations Guidelines and Patterns
+
+== Learning Objectives
+
+By the end of this module you will be able to:
+
+* Describe the "phoenix" platform-as-code pattern and explain why it matters for RHOAI operations
+* Install the OpenShift GitOps Operator and navigate the ArgoCD UI
+* Explain the app-of-apps pattern using Helm charts, Kustomize overlays, and raw YAML
+* Demonstrate GitOps self-healing by making a manual change and watching ArgoCD revert it
+* Describe multi-cluster management with ACM and GitOps policy generation
+* Identify baseline security integration points with ACS
+* Compare secrets management strategies (Vault, Age-SOPS, ExternalSecrets Operator)
+* Describe the role of Standard Operating Procedures (SOPs) in day-2 operations
+
+== The Phoenix Pattern: Platform as Code
+
+Enterprise AI platforms must be _reproducible_. When a cluster fails, the response should not be a heroic recovery effort -- it should be to stand up a new one from the same declarative source. This is the *phoenix pattern*: every cluster is disposable because the desired state lives in Git, not on the cluster itself.
+
+For RHOAI operations the phoenix pattern means:
+
+* *Operators as code* -- Subscription resources, operator versions, and channel pinning are all checked into Git. The `rhoai-cluster-pool/applications/rhoai` directory in this workshop's GitOps repository defines every operator needed by RHOAI (rhods-operator, serverless, pipelines, kueue, leader-worker-set, rhcl/kuadrant, job-set) along with their exact version pins.
+* *Custom resources as code* -- The `DSCInitialization` and `DataScienceCluster` CRs that configure RHOAI components are version-controlled alongside the operator definitions. Changes go through pull requests, not `oc edit`.
+* *Overlay-driven environments* -- Kustomize overlays allow the same base configuration to be tuned per environment (roadshow, prelude, production) without duplication.
+* *Immutable audit trail* -- Git history provides a complete record of who changed what, when, and why. Combined with branch protections and CI checks this forms an auditable change management process.
+
+[NOTE]
+====
+The phoenix pattern does not mean you never troubleshoot a running cluster. It means that when you _do_ troubleshoot, you capture the fix in Git so it applies automatically to every cluster going forward.
+====
+
+== App-of-Apps Pattern
+
+Large platform deployments like RHOAI involve many cooperating components: operators, custom resources, namespace configurations, RBAC policies, and more. The *app-of-apps* pattern organizes these into a hierarchy where a single root ArgoCD Application points to a directory of child Application manifests.
+
+=== Composition Strategies
+
+ArgoCD supports three manifest generation strategies, and a real-world RHOAI deployment typically uses all three:
+
+[cols="1,2,2",options="header"]
+|===
+|Strategy |When to Use |RHOAI Example
+
+|*Helm Charts*
+|Parameterized, reusable components with values files per environment
+|OLM operator installation charts (`olm-v0-chart`, `olm-v1-chart`) that accept an operator list with names, channels, and versions
+
+|*Kustomize*
+|Base-plus-overlay composition for environment-specific tuning
+|`base/` defines the core DSC and DSCI resources; `overlay/roadshow/` adds roadshow-specific dashboard config and hardware profiles
+
+|*Raw YAML*
+|Simple, static resources that do not need parameterization
+|Namespace definitions, `OdhDashboardConfig` resources, telemetry policies
+|===
+
+=== How They Work Together
+
+In the `rhoai-cluster-pool/applications/rhoai` example:
+
+. The `base/kustomization.yaml` pulls in raw YAML resources (`dsci-cr.yaml`, `dsc-cr.yaml`, `odh-dashboard.yaml`) alongside Helm-rendered operator subscriptions.
+. Overlay directories like `overlay/roadshow/` patch the base with environment-specific custom resources (hardware profiles, MLflow, Postgres for MaaS).
+. ACM `PolicyGenerator` configs wrap the overlay output into governance policies for multi-cluster delivery.
+
+This layered approach keeps each concern in the right abstraction: Helm for parameterized reuse, Kustomize for environment variance, raw YAML for simple declarations.
+
+== Exercise 1: Install the OpenShift GitOps Operator
+
+In this exercise you will install the OpenShift GitOps Operator, which provides a managed ArgoCD instance on the cluster.
+
+=== Step 1: Create the Operator Subscription
+
+[source,bash,role="execute"]
+----
+cat <<'EOF' | oc apply -f -
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-gitops-operator
+  namespace: openshift-operators
+spec:
+  channel: latest
+  installPlanApproval: Automatic
+  name: openshift-gitops-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+EOF
+----
+
+=== Step 2: Wait for the Operator to Install
+
+[source,bash,role="execute"]
+----
+oc wait --for=condition=CatalogSourcesUnhealthy=False \
+  subscription/openshift-gitops-operator \
+  -n openshift-operators \
+  --timeout=120s
+----
+
+[source,bash,role="execute"]
+----
+oc get csv -n openshift-operators | grep gitops
+----
+
+Expected output (version may vary):
+
+----
+openshift-gitops-operator.v1.15.1   Red Hat OpenShift GitOps   1.15.1   Succeeded
+----
+
+=== Step 3: Verify the ArgoCD Instance Is Ready
+
+The operator creates a default ArgoCD instance in the `openshift-gitops` namespace:
+
+[source,bash,role="execute"]
+----
+oc get argocd -n openshift-gitops
+----
+
+Expected output:
+
+----
+NAME               AGE
+openshift-gitops   2m
+----
+
+Wait for all ArgoCD pods to reach Running status:
+
+[source,bash,role="execute"]
+----
+oc get pods -n openshift-gitops -l app.kubernetes.io/part-of=argocd
+----
+
+You should see pods for `argocd-server`, `argocd-repo-server`, `argocd-application-controller`, `argocd-redis`, and `argocd-dex-server`, all in `Running` state.
+
+=== Step 4: Retrieve the ArgoCD Admin Password
+
+[source,bash,role="execute"]
+----
+oc extract secret/openshift-gitops-cluster -n openshift-gitops --to=- --keys=admin.password 2>/dev/null
+----
+
+[IMPORTANT]
+====
+Save this password. You will need it to log into the ArgoCD UI in the next exercise. In a production environment this password would be rotated and managed through a secrets management solution -- never stored in plaintext.
+====
+
+=== Verify: Exercise 1
+
+Confirm the operator CSV status and ArgoCD readiness:
+
+[source,bash,role="execute"]
+----
+oc get csv -n openshift-operators | grep gitops | awk '{print $NF}'
+----
+
+Expected output:
+
+----
+Succeeded
+----
+
+[source,bash,role="execute"]
+----
+oc get argocd openshift-gitops -n openshift-gitops -o jsonpath='{.status.phase}'
+echo
+----
+
+Expected output:
+
+----
+Available
+----
+
+== Exercise 2: Tour the ArgoCD UI and Explore the RHOAI Application
+
+In this exercise you will access the ArgoCD UI, create an ArgoCD Application that deploys RHOAI operator subscriptions from the GitOps repository, and explore its structure.
+
+=== Step 1: Access the ArgoCD UI
+
+Open the ArgoCD route in your browser:
+
+{argocd_url}
+
+Log in with:
+
+* **Username**: `admin`
+* **Password**: the password retrieved in Exercise 1
+
+Alternatively, open the ArgoCD link from the OpenShift Console application launcher (the grid icon in the top-right corner).
+
+=== Step 2: Create the RHOAI GitOps Application
+
+Create an ArgoCD Application that points to the RHOAI base configuration in the `rhoai-cluster-pool` repository. This application uses Kustomize to render the operator subscriptions, custom resources, and dashboard configuration:
+
+[source,bash,role="execute"]
+----
+cat <<'EOF' | oc apply -f -
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rhoai-operators
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/rhai-code/rhoai-cluster-pool.git
+    targetRevision: main
+    path: applications/rhoai/base
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - SkipDryRunOnMissingResource=true
+EOF
+----
+
+=== Step 3: Explore the Application in the ArgoCD UI
+
+Return to the ArgoCD UI and click on the **rhoai-operators** application tile. Observe:
+
+. **Resource tree** -- ArgoCD renders a visual tree showing every Kubernetes resource managed by this application. You should see `Namespace`, `Subscription`, `DSCInitialization`, `DataScienceCluster`, and `OdhDashboardConfig` resources.
+. **Sync status** -- The application should show as *Synced* with a green checkmark. This means the cluster state matches the Git source.
+. **Health status** -- Individual resources show health icons. Healthy resources appear as green hearts.
+
+[NOTE]
+====
+The RHOAI operators defined in `values-v0.yaml` include: `rhods-operator` (stable-3.5), `openshift-pipelines-operator-rh` (latest), `serverless-operator` (stable), `kueue-operator` (stable-v1.4), `leader-worker-set` (stable-v1.0), `rhcl-operator` (stable), and `job-set` (stable-v1.0). Each entry specifies the channel, version, catalog source, and whether the namespace should be created.
+====
+
+=== Step 4: Explore the Kustomize Structure from the CLI
+
+Examine what Kustomize renders for the RHOAI base:
+
+[source,bash,role="execute"]
+----
+oc get applications rhoai-operators -n openshift-gitops -o jsonpath='{.status.sync.status}'
+echo
+----
+
+Expected output:
+
+----
+Synced
+----
+
+List the resources managed by the application:
+
+[source,bash,role="execute"]
+----
+oc get applications rhoai-operators -n openshift-gitops \
+  -o jsonpath='{range .status.resources[*]}{.kind}/{.name}{"\n"}{end}'
+----
+
+You should see output listing Namespaces, Subscriptions, the DSCInitialization, DataScienceCluster, and OdhDashboardConfig resources.
+
+=== Verify: Exercise 2
+
+[source,bash,role="execute"]
+----
+oc get applications rhoai-operators -n openshift-gitops -o jsonpath='{.status.health.status}'
+echo
+----
+
+Expected output:
+
+----
+Healthy
+----
+
+== Exercise 3: Verify GitOps Self-Healing
+
+One of the most powerful properties of GitOps is *self-healing*: when someone makes a manual change on the cluster that deviates from the Git source, ArgoCD detects the drift and reverts it automatically. In this exercise you will deliberately introduce drift and watch ArgoCD correct it.
+
+=== Step 1: Identify a Managed Resource to Modify
+
+Check the current labels on the `redhat-ods-operator` namespace (created by the RHOAI operator subscription):
+
+[source,bash,role="execute"]
+----
+oc get namespace redhat-ods-operator -o jsonpath='{.metadata.labels}' | python3 -m json.tool
+----
+
+=== Step 2: Introduce Drift
+
+Add a rogue label to the namespace. This simulates an unauthorized manual change:
+
+[source,bash,role="execute"]
+----
+oc label namespace redhat-ods-operator manual-change=bad-practice
+----
+
+Verify the label was added:
+
+[source,bash,role="execute"]
+----
+oc get namespace redhat-ods-operator -o jsonpath='{.metadata.labels.manual-change}'
+echo
+----
+
+Expected output:
+
+----
+bad-practice
+----
+
+=== Step 3: Observe ArgoCD Detect Drift
+
+In the ArgoCD UI, navigate to the **rhoai-operators** application. Within a few moments (the default sync interval is 3 minutes, but self-heal triggers faster), you should see:
+
+. The application status briefly changes to *OutOfSync*
+. ArgoCD automatically syncs the resource back to the Git-declared state
+. The status returns to *Synced*
+
+You can also watch from the CLI:
+
+[source,bash,role="execute"]
+----
+oc get applications rhoai-operators -n openshift-gitops -w
+----
+
+Press `Ctrl+C` once you see the status return to `Synced`.
+
+=== Step 4: Confirm the Drift Was Reverted
+
+[source,bash,role="execute"]
+----
+oc get namespace redhat-ods-operator -o jsonpath='{.metadata.labels.manual-change}'
+echo
+----
+
+Expected output (empty -- the label was removed):
+
+----
+
+----
+
+[IMPORTANT]
+====
+Self-healing only works when `selfHeal: true` is set in the ArgoCD Application's `syncPolicy.automated` block. Without it, ArgoCD detects drift but does not correct it automatically. In production, always enable self-heal for platform-critical applications like RHOAI operator management.
+====
+
+=== Verify: Exercise 3
+
+[source,bash,role="execute"]
+----
+oc get applications rhoai-operators -n openshift-gitops -o jsonpath='{.status.sync.status}'
+echo
+----
+
+Expected output:
+
+----
+Synced
+----
+
+[source,bash,role="execute"]
+----
+ROGUE_LABEL=$(oc get namespace redhat-ods-operator -o jsonpath='{.metadata.labels.manual-change}' 2>/dev/null)
+if [ -z "$ROGUE_LABEL" ]; then
+  echo "PASS: Manual label was reverted by ArgoCD"
+else
+  echo "FAIL: Label still present -- wait a moment and re-check"
+fi
+----
+
+== Multi-Cluster Management with ACM and GitOps
+
+In production, RHOAI is rarely deployed to a single cluster. Advanced Cluster Management (ACM) extends the GitOps model to manage fleets of clusters from a central hub.
+
+=== Architecture Overview
+
+The multi-cluster pattern works as follows:
+
+. A *hub cluster* runs ACM and a central ArgoCD instance.
+. *Managed clusters* (spokes) are registered with ACM and receive workloads via Policies.
+. The `PolicyGenerator` Kustomize plugin transforms ArgoCD Application manifests into ACM `Policy` objects that are distributed to matching clusters based on `Placement` rules.
+
+=== Policy-Based Delivery
+
+The `rhoai-cluster-pool` repository demonstrates this pattern. The `overlay/policy-generator-config.yaml` wraps the RHOAI Kustomize output into governance policies:
+
+* **Compliance framework** -- Policies are tagged with NIST SP 800-53 controls (`CM-2 Baseline Configuration`), connecting operational automation to compliance requirements.
+* **Placement-based targeting** -- Different overlays target different cluster groups: `placement-spokes-roadshow` for demo environments, `placement-spokes-prelude-34` for prerelease testing.
+* **Remediation** -- Policies use `remediationAction: enforce`, meaning ACM actively reconciles cluster state, not just reports on it.
+
+[NOTE]
+====
+Even without ACM, the same overlay pattern works for single-cluster GitOps. The policy generator layer is additive -- you can adopt it when you grow to multi-cluster without restructuring your base configurations.
+====
+
+== Baseline Security with ACS
+
+Red Hat Advanced Cluster Security (ACS) provides runtime security, vulnerability scanning, and compliance checking for OpenShift clusters running RHOAI workloads.
+
+=== Key Integration Points
+
+[cols="1,2",options="header"]
+|===
+|Capability |RHOAI Relevance
+
+|*Image scanning*
+|Scan workbench images, serving runtime images, and pipeline step images for CVEs before they are used in production
+
+|*Network policies*
+|Validate that RHOAI namespaces enforce least-privilege network segmentation between model serving endpoints, pipeline controllers, and workbench pods
+
+|*Runtime detection*
+|Alert on anomalous behavior in inference endpoints or workbench containers (cryptomining, reverse shells, unexpected outbound connections)
+
+|*Compliance scanning*
+|Verify RHOAI namespaces comply with CIS benchmarks and organizational security policies
+
+|*Admission control*
+|Block deployment of unsigned or vulnerable container images to model serving or pipeline namespaces
+|===
+
+=== Deployment Approach
+
+ACS is deployed via the same GitOps pattern. The `rhoai-cluster-pool/applications/advanced-cluster-security` directory contains policy-generator configurations that deploy ACS policies across managed clusters. ACS Central runs on the hub; ACS Secured Cluster Services run on each spoke including the RHOAI workload clusters.
+
+== Secrets Management Strategies
+
+RHOAI workloads often require secrets: S3 credentials for model storage, database passwords for pipeline metadata, API keys for external model endpoints. Managing these secrets securely is critical.
+
+=== Strategy Comparison
+
+[cols="1,2,1,1",options="header"]
+|===
+|Strategy |How It Works |Pros |Cons
+
+|*HashiCorp Vault*
+|External secrets vault with dynamic credential generation. Pods access secrets via the Vault Agent sidecar or CSI driver.
+|Centralized, dynamic rotation, fine-grained ACLs, audit logging
+|Operational complexity, additional infrastructure to manage
+
+|*Age / SOPS*
+|Secrets are encrypted in Git using Age keys. Decrypted at apply time by ArgoCD with the `ksops` plugin or a Kustomize exec plugin.
+|No external infrastructure, secrets travel with code, simple tooling
+|Key distribution challenge, no dynamic rotation, encrypted blobs in Git history
+
+|*ExternalSecrets Operator (ESO)*
+|A Kubernetes operator that syncs secrets from external providers (AWS SM, Azure KV, Vault, GCP SM) into Kubernetes Secret objects.
+|Cloud-native, supports multiple backends, clean separation of concerns
+|Requires external provider, adds an operator dependency
+|===
+
+[NOTE]
+====
+These strategies are not mutually exclusive. A common pattern is to use Vault or a cloud secrets manager as the source of truth, ESO as the sync mechanism into Kubernetes, and SOPS for bootstrapping secrets that ESO itself needs (like its provider credentials).
+====
+
+The `rhoai-cluster-pool` repository includes GitOps configurations for both Vault (`applications/vault/`) and ESO (`applications/eso/`), demonstrating how they fit into the app-of-apps pattern.
+
+== Standard Operating Procedures (SOPs)
+
+SOPs transform tribal knowledge into repeatable, auditable processes. For RHOAI operations, SOPs should cover:
+
+=== Categories of SOPs
+
+[cols="1,3",options="header"]
+|===
+|Category |Example Procedures
+
+|*Incident response*
+|Model serving endpoint returns 5xx errors; GPU node becomes NotReady; pipeline runs stall
+
+|*Change management*
+|RHOAI operator upgrade; adding a new model serving runtime; onboarding a new data science team
+
+|*Capacity management*
+|Scaling GPU node pools; adjusting Kueue ClusterQueue quotas; right-sizing model serving replicas
+
+|*Security response*
+|CVE found in workbench image; compromised S3 credentials; unauthorized model endpoint access
+
+|*Backup and recovery*
+|Scheduled OADP backups; restore a single RHOAI project; full platform recovery
+|===
+
+=== SOP as Code
+
+SOPs benefit from the same version-control practices as platform configuration:
+
+* Store SOPs in a Git repository alongside runbooks
+* Use Markdown or AsciiDoc for human readability
+* Embed executable verification steps (the same `oc` commands that appear in this workshop)
+* Link SOPs to monitoring alerts so that when an alert fires, the responder is directed to the correct procedure
+* Review SOPs through the same pull request process used for code changes
+
+== Disconnected / Air-Gapped Considerations
+
+Operating RHOAI in disconnected environments requires additional planning for operator mirroring, container image mirroring, model artifact hosting, and certificate management.
+
+[IMPORTANT]
+====
+Disconnected deployment is covered in detail in the xref:08-appendix-disconnected.adoc[Appendix: Disconnected Considerations]. Refer to that section for guidance on `oc-mirror`, `ImageDigestMirrorSet`, internal Helm chart hosting, and custom CA bundle injection.
+====
+
+== Module Summary
+
+In this module you:
+
+* Learned the phoenix platform-as-code pattern and why disposable, Git-driven infrastructure is essential for RHOAI operations
+* Installed the OpenShift GitOps Operator and verified the ArgoCD instance
+* Created an ArgoCD Application that manages RHOAI operator subscriptions using the Kustomize-based structure from the `rhoai-cluster-pool` repository
+* Explored the app-of-apps pattern with its three composition strategies (Helm, Kustomize, raw YAML)
+* Demonstrated GitOps self-healing by introducing and watching ArgoCD revert a manual namespace change
+* Reviewed multi-cluster management with ACM policy generation, baseline security with ACS, secrets management strategies, and SOP practices
+
+Proceed to xref:03-module-02-idp-users-groups.adoc[Module 2: IDP, Users & Group Management].

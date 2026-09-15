@@ -1,0 +1,40 @@
+= Conclusion
+:navtitle: Conclusion
+
+== Workshop Summary
+
+Congratulations on completing the RHOAI 3.5 Operations Workshop. Here is a recap of what you covered:
+
+=== Module 1: Operations Guidelines and Patterns
+
+You explored platform-as-code principles, the GitOps operating model with ArgoCD, multi-cluster management with ACM, security baselines with ACS, and secrets management strategies. You deployed the OpenShift GitOps Operator and toured an ArgoCD-managed RHOAI deployment.
+
+=== Module 2: IDP, Users & Group Management
+
+You configured FreeIPA (LDAP) and Keycloak (OIDC) identity providers, created persona-based groups for data engineers and data scientists, configured RHOAI Auth CR access restrictions, built a wine quality classifier using Feature Store, and registered it in the model registry.
+
+=== Module 3: Managing Models and Assets at Scale
+
+You built and imported a custom workbench image, created a ModelCar OCI container, explored Kueue resource management concepts (ClusterQueues, LocalQueues, ResourceFlavors), and reviewed llm-d serving topologies for large-scale model deployment.
+
+=== Module 4: Upgrades
+
+You examined the RHOAI release lifecycle, inspected operator subscriptions and upgrade channels, learned about dependent operator pinning (RHCL), and reviewed MaaS version differences across 3.4, 3.5, and the upcoming 3.6.
+
+=== Module 5: Observe & Debug
+
+You explored built-in RHOAI monitoring, configured metrics export, reviewed the llm-d Perses dashboards, and previewed the MaaS external metering architecture coming in 3.6.
+
+=== Module 6: Backups & DR
+
+You deployed OADP, created backups of RHOAI project namespaces, restored resources, documented the CRD dependency graph, and discussed the current product gaps and opportunities for future improvement.
+
+== Additional Resources
+
+* https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5[Red Hat OpenShift AI 3.5 Documentation]
+* https://docs.redhat.com/en/documentation/openshift_container_platform/4.22[OpenShift Container Platform 4.22 Documentation]
+* https://access.redhat.com/articles/rhoai-supported-configs[RHOAI Supported Configurations]
+
+== Thank You
+
+Thank you for participating in this workshop. The skills and patterns you have practiced here form the foundation for operating RHOAI at enterprise scale.

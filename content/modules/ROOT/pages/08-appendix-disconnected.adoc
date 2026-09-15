@@ -1,0 +1,43 @@
+= Appendix: Disconnected / Air-Gapped Considerations
+:navtitle: Disconnected Considerations
+
+[NOTE]
+====
+This section is reserved for future content covering disconnected and air-gapped RHOAI deployments. The topics below outline areas that require special consideration when operating RHOAI without internet access.
+====
+
+== Areas for Future Coverage
+
+=== Operator Mirroring
+
+* Mirror RHOAI operator catalog using `oc-mirror`
+* Mirror dependent operators (OpenShift GitOps, OADP, ServiceMesh, Serverless)
+* Maintain a local operator catalog index
+
+=== Container Image Mirroring
+
+* Mirror RHOAI component images to an internal registry
+* Mirror workbench images (Jupyter, code-server, RStudio)
+* Mirror model serving runtime images (vLLM, TGI, Caikit)
+* Configure `ImageContentSourcePolicy` or `ImageDigestMirrorSet`
+
+=== Model Artifact Storage
+
+* Host ModelCar OCI images in an internal container registry
+* Configure S3-compatible object storage for model artifacts
+* Pre-download model weights for offline use
+
+=== Helm Chart and Content Delivery
+
+* Host the `zt-showroom-deployer` chart in an internal Helm repository
+* Mirror the RHDP showroom theme UI bundle
+* Host Antora content builds internally
+
+=== Certificate Management
+
+* Configure custom CA bundles for internal registries
+* Inject CA certificates into workbench images and serving runtimes
+
+== Contributing
+
+If you have experience operating RHOAI in disconnected environments, consider contributing your procedures and lessons learned to this section.
