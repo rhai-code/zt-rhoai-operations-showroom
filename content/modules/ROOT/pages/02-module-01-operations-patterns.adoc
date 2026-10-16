@@ -216,14 +216,19 @@ The multi-cluster pattern works as follows:
 . ArgoCD pulls the configuration from the git config repository and applies it to the clusters or a webhook is used to trigger the sync.
 . Secrets are managed by ESO (External Secrets Operator) and are hydrated into the clusters via the ESO operator.
 . Vault uses a scoped service account from the ArgoCD namespace and the cluster Token API endpoint to validate access to the vault Key Value (kv) space.
-. A *hub cluster* runs ACM and a central ArgoCD instance. Policy is generated on the hub cluster.
-. *Managed clusters* (spokes) are registered with ACM.
+. A hub cluster runs ACM and a central ArgoCD instance. Policy is generated on the hub cluster.
+. Managed clusters (spokes) are registered with ACM.
 . Spoke clusters and receive workloads via Policies using a pull model from the hub cluster (this pull methodology scales to thousands of spoke clusters).
 . The spoke klusterlet is responsible for applying the policies to the spoke clusters locally.
 
 image::acm-gitops-eso.png["ACM, GitOps and ESO architecture -- the SRE pushes configuration to a git config repository, ArgoCD on the hub cluster applies it, ACM delivers prescriptions to the managed clusters via klusterlet, and ESO invalidates and syncs secrets from HashiCorp Vault", width=850]
 
 The `PolicyGenerator` Kustomize plugin registered as a sidecar container in ArgoCD, transforms ArgoCD Application manifests into ACM `Policy` objects that are distributed to matching clusters based on `Placement` rules. Administrators can create placement rules to target specific clusters or groups of clusters using Kubernetes labels and selectors.
+
+[NOTE]
+====
+This is an opinionated architecture. This is one way that is consistent with the phoenix pattern and the app-of-apps pattern that has been proven in production with multiple customers. Various other patterns and tooling choices are certainly possible.
+====
 
 === Policy-Based Delivery
 
