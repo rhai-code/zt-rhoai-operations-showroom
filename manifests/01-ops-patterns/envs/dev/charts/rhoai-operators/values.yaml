@@ -1,0 +1,9 @@
+# Common core RHOAI operator install -- OLM v0 Subscription parameters.
+# Each environment overlay (envs/dev, envs/prod) ships this chart with its
+# own values.yaml; diff the two to see what changes between dev and prod.
+operatorNamespace: redhat-ods-operator
+operators:
+  - name: rhods-operator
+    channel: beta
+    version: "" # no pin -- track the latest in the channel (dev)
+    installPlanApproval: Automatic

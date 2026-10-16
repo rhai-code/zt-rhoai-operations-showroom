@@ -1,0 +1,6 @@
+apiVersion: v2
+name: rhoai-operators
+description: OLM operator installation for RHOAI (dev values)
+type: application
+version: 0.1.0
+appVersion: "dev"

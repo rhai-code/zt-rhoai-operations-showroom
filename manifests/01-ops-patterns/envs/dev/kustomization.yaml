@@ -1,0 +1,15 @@
+# Dev -- lean footprint: no model serving, no model registry, no
+# explainability. The common core (dashboard, workbenches) is inherited
+# from the base, the Helm chart is inflated with dev values.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - path: dsc-patch.yaml
+helmGlobals:
+  chartHome: charts
+helmCharts:
+  - name: rhoai-operators
+    includeCRDs: false
+    releaseName: rhoai-operators

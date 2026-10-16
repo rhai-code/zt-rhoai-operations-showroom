@@ -1,0 +1,21 @@
+# Child Application -- prod environment.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rhoai-prod
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/zt-rhoai-operations-showroom.git
+    targetRevision: main
+    path: manifests/01-ops-patterns/envs/prod
+    plugin:
+      name: argocd-novault-plugin-kustomize
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: redhat-ods-operator
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true

@@ -1,0 +1,33 @@
+# Renders the OLM v0 objects that install the RHOAI operators:
+# a Namespace, an OperatorGroup, and one Subscription per entry in
+# .Values.operators (name, channel, version pin, install approval).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.operatorNamespace }}
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: {{ .Values.operatorNamespace }}
+  namespace: {{ .Values.operatorNamespace }}
+spec:
+  targetNamespaces:
+    - {{ .Values.operatorNamespace }}
+{{- range .Values.operators }}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Values.operatorNamespace }}
+spec:
+  channel: {{ .channel }}
+  name: {{ .name }}
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: {{ .installPlanApproval }}
+  {{- if .version }}
+  startingCSV: {{ .name }}.v{{ .version }}
+  {{- end }}
+{{- end }}

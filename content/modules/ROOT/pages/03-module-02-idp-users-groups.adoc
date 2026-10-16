@@ -1,5 +1,8 @@
 = Module 2: Integrate with IDP, Users & Group Management
 :navtitle: IDP, Users & Group Management
+:toc: macro
+:toclevels: 1
+:icons: font
 
 == Learning Objectives
 
@@ -27,7 +30,7 @@ In production environments, these providers connect to existing enterprise direc
 
 FreeIPA provides LDAP directory services, Kerberos authentication, DNS, and certificate authority functions. You will deploy it as the primary user directory for this workshop.
 
-=== Step 1: Add the Helm Repository
+=== 1.1 Add the Helm Repository
 
 [source,bash,role="execute"]
 ----
@@ -35,14 +38,14 @@ helm repo add freeipa https://freeipa.github.io/helm-charts
 helm repo update
 ----
 
-=== Step 2: Create the FreeIPA Namespace
+=== 1.2 Create the FreeIPA Namespace
 
 [source,bash,role="execute"]
 ----
 oc new-project freeipa
 ----
 
-=== Step 3: Create the FreeIPA Values File
+=== 1.3 Create the FreeIPA Values File
 
 [source,bash,role="execute",subs="attributes"]
 ----
@@ -71,7 +74,7 @@ securityContext:
 EOF
 ----
 
-=== Step 4: Install FreeIPA
+=== 1.4 Install FreeIPA
 
 [source,bash,role="execute"]
 ----
@@ -87,7 +90,7 @@ helm upgrade --install freeipa freeipa/freeipa-server \
 FreeIPA initial setup takes 5-8 minutes as it configures the LDAP directory, Kerberos KDC, and internal CA. The `--wait` flag ensures the Helm command does not return until the pod is healthy.
 ====
 
-=== Step 5: Populate Users and Groups
+=== 1.5 Populate Users and Groups
 
 Once FreeIPA is running, create workshop users and organize them into persona-based groups:
 
@@ -137,7 +140,7 @@ oc exec -n freeipa $FreeIPA_POD -- bash -c '
 '
 ----
 
-=== Verify: Exercise 1
+=== Verify
 
 [source,bash,role="execute"]
 ----
@@ -162,14 +165,14 @@ freeipa   ipa.apps.cluster.example.com                  freeipa    443    passth
 
 Now configure OpenShift to authenticate users against the FreeIPA LDAP directory.
 
-=== Step 1: Retrieve the FreeIPA CA Certificate
+=== 2.1 Retrieve the FreeIPA CA Certificate
 
 [source,bash,role="execute"]
 ----
 oc exec -n freeipa $FreeIPA_POD -- cat /etc/ipa/ca.crt > /tmp/freeipa-ca.crt
 ----
 
-=== Step 2: Create the CA ConfigMap
+=== 2.2 Create the CA ConfigMap
 
 [source,bash,role="execute"]
 ----
@@ -178,7 +181,7 @@ oc create configmap freeipa-ca \
   -n openshift-config
 ----
 
-=== Step 3: Create the Bind Password Secret
+=== 2.3 Create the Bind Password Secret
 
 [source,bash,role="execute",subs="attributes"]
 ----
@@ -187,7 +190,7 @@ oc create secret generic freeipa-ldap-secret \
   -n openshift-config
 ----
 
-=== Step 4: Patch the OAuth Configuration
+=== 2.4 Patch the OAuth Configuration
 
 [source,bash,role="execute"]
 ----
@@ -222,7 +225,7 @@ oc patch oauth cluster --type=merge -p '
 }'
 ----
 
-=== Step 5: Wait for OAuth Pods to Roll
+=== 2.5 Wait for OAuth Pods to Roll
 
 The OAuth server pods will restart to pick up the new configuration:
 
@@ -231,7 +234,7 @@ The OAuth server pods will restart to pick up the new configuration:
 oc rollout status deployment/oauth-openshift -n openshift-authentication --timeout=120s
 ----
 
-=== Step 6: Sync LDAP Groups to OpenShift
+=== 2.6 Sync LDAP Groups to OpenShift
 
 Create a sync configuration to pull FreeIPA groups into OpenShift:
 
@@ -274,7 +277,7 @@ oc adm groups sync --sync-config=/tmp/ldap-sync.yaml --confirm
 rm /tmp/bind-password
 ----
 
-=== Verify: Exercise 2
+=== Verify
 
 Test LDAP login with one of the created users:
 
@@ -319,7 +322,7 @@ rhods-users       ds-alice, ds-bob, de-carol, de-dave, mle-eve, mle-frank, ops-a
 
 Keycloak provides OpenID Connect (OIDC) authentication with support for federated identity, multi-factor authentication, and fine-grained authorization.
 
-=== Step 1: Verify Keycloak Is Running
+=== 3.1 Verify Keycloak Is Running
 
 Your workshop environment includes a pre-deployed Keycloak instance. Verify it is accessible:
 
@@ -339,7 +342,7 @@ Access the Keycloak admin console at:
 
 {keycloak_url}
 
-=== Step 2: Create an OpenShift Client in Keycloak
+=== 3.2 Create an OpenShift Client in Keycloak
 
 [source,bash,role="execute",subs="attributes"]
 ----
@@ -361,7 +364,7 @@ oc exec -n keycloak $KEYCLOAK_POD -- /opt/keycloak/bin/kcadm.sh create clients \
   -s directAccessGrantsEnabled=true
 ----
 
-=== Step 3: Create the OIDC Client Secret in OpenShift
+=== 3.3 Create the OIDC Client Secret in OpenShift
 
 [source,bash,role="execute"]
 ----
@@ -370,7 +373,7 @@ oc create secret generic keycloak-oidc-secret \
   -n openshift-config
 ----
 
-=== Step 4: Add the OIDC Identity Provider to OAuth
+=== 3.4 Add the OIDC Identity Provider to OAuth
 
 [source,bash,role="execute",subs="attributes"]
 ----
@@ -399,14 +402,14 @@ oc patch oauth cluster --type=json -p '[
 ]'
 ----
 
-=== Step 5: Wait for OAuth Rollout
+=== 3.5 Wait for OAuth Rollout
 
 [source,bash,role="execute"]
 ----
 oc rollout status deployment/oauth-openshift -n openshift-authentication --timeout=120s
 ----
 
-=== Verify: Exercise 3
+=== Verify
 
 Confirm both identity providers are configured:
 
@@ -428,7 +431,7 @@ Open the OpenShift console login page. You should now see both **freeipa-ldap** 
 
 With identity providers configured, you now set up the RHOAI authorization model to control who can access the RHOAI dashboard and with what level of access.
 
-=== Step 1: Verify Groups Exist
+=== 4.1 Verify Groups Exist
 
 Confirm the LDAP-synced groups are available:
 
@@ -445,7 +448,7 @@ rhods-admins   [ops-admin]
 rhods-users    [ds-alice ds-bob de-carol de-dave mle-eve mle-frank ops-admin]
 ----
 
-=== Step 2: Configure the RHOAI Auth CR
+=== 4.2 Configure the RHOAI Auth CR
 
 The RHOAI Auth CR (`services.platform.opendatahub.io`) controls which groups can access the RHOAI dashboard. Update it to use the groups you created:
 
@@ -470,7 +473,7 @@ EOF
 The `adminGroups` list defines who can administer RHOAI settings (manage serving runtimes, cluster settings, accelerator profiles). The `allowedGroups` list defines who can access the RHOAI dashboard at all. Users not in `allowedGroups` will see an "Access denied" page.
 ====
 
-=== Step 3: Create Data Science Project Namespaces Per Persona
+=== 4.3 Create Data Science Project Namespaces Per Persona
 
 [source,bash,role="execute"]
 ----
@@ -481,7 +484,7 @@ for team in data-scientists data-engineers ml-engineers; do
 done
 ----
 
-=== Step 4: Configure Custom Workbench Roles (Optional)
+=== 4.4 Configure Custom Workbench Roles (Optional)
 
 [NOTE]
 ====
@@ -565,7 +568,7 @@ rules:
 EOF
 ----
 
-=== Verify: Exercise 4
+=== Verify
 
 [source,bash,role="execute"]
 ----
@@ -605,7 +608,7 @@ workbench-reader
 
 In this exercise you will use Feast (Feature Store) to prepare features, train a wine quality classification model, and deploy it for inference. This exercise demonstrates how the persona-based groups you configured interact with RHOAI data science workflows.
 
-=== Step 1: Create the Data Science Project
+=== 5.1 Create the Data Science Project
 
 [source,bash,role="execute"]
 ----
@@ -613,7 +616,7 @@ oc new-project wine-classifier
 oc adm policy add-role-to-group edit data-scientists -n wine-classifier
 ----
 
-=== Step 2: Deploy the Feature Store (Feast)
+=== 5.2 Deploy the Feature Store (Feast)
 
 [source,bash,role="execute"]
 ----
@@ -671,7 +674,7 @@ data:
 EOF
 ----
 
-=== Step 3: Create the Training Pipeline Script
+=== 5.3 Create the Training Pipeline Script
 
 [source,bash,role="execute"]
 ----
@@ -718,7 +721,7 @@ print(f"\nModel saved to {model_path}")
 PYEOF
 ----
 
-=== Step 4: Run the Training Job
+=== 5.4 Run the Training Job
 
 [source,bash,role="execute"]
 ----
@@ -769,7 +772,7 @@ spec:
 EOF
 ----
 
-=== Step 5: Wait for Training to Complete
+=== 5.5 Wait for Training to Complete
 
 [source,bash,role="execute"]
 ----
@@ -785,7 +788,7 @@ oc logs job/wine-training -n wine-classifier
 
 You should see the model accuracy and classification report printed to the log.
 
-=== Step 6: Deploy the Model Using RHOAI Model Serving
+=== 5.6 Deploy the Model Using RHOAI Model Serving
 
 Create an InferenceService to serve the trained wine classifier:
 
@@ -818,14 +821,14 @@ spec:
 EOF
 ----
 
-=== Step 7: Wait for the InferenceService to Become Ready
+=== 5.7 Wait for the InferenceService to Become Ready
 
 [source,bash,role="execute"]
 ----
 oc wait --for=condition=Ready inferenceservice/wine-classifier -n wine-classifier --timeout=300s
 ----
 
-=== Verify: Exercise 5
+=== Verify
 
 [source,bash,role="execute"]
 ----
@@ -858,14 +861,14 @@ You should see a JSON response with the predicted wine class.
 
 The RHOAI model registry provides a centralized catalog of trained models with versioning, metadata, and lifecycle management.
 
-=== Step 1: Verify Model Registry Is Available
+=== 6.1 Verify Model Registry Is Available
 
 [source,bash,role="execute"]
 ----
 oc get pods -n redhat-ods-applications -l app=model-registry
 ----
 
-=== Step 2: Register the Model
+=== 6.2 Register the Model
 
 [source,bash,role="execute",subs="attributes"]
 ----
@@ -885,7 +888,7 @@ curl -sk -X POST "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered
   }'
 ----
 
-=== Step 3: Create a Model Version
+=== 6.3 Create a Model Version
 
 [source,bash,role="execute",subs="attributes"]
 ----
@@ -911,7 +914,7 @@ curl -sk -X POST "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_vers
   }"
 ----
 
-=== Step 4: Create a Model Artifact
+=== 6.4 Create a Model Artifact
 
 [source,bash,role="execute",subs="attributes"]
 ----
@@ -932,7 +935,7 @@ curl -sk -X POST "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_vers
   }'
 ----
 
-=== Verify: Exercise 6
+=== Verify
 
 [source,bash,role="execute",subs="attributes"]
 ----
@@ -1037,7 +1040,7 @@ This table covers the primary RBAC surfaces as of RHOAI 3.5. Additional subsyste
 The `cluster-admin` ClusterRole bypasses all RBAC checks. Avoid granting it to data science users. Instead, use the minimum set of roles described above to implement least-privilege access.
 ====
 
-== Module Summary
+== Module summary
 
 In this module you:
 

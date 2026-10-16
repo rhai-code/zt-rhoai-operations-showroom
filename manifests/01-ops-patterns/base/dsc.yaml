@@ -1,0 +1,17 @@
+# DataScienceCluster -- common core shared by every environment.
+# Components that differ between dev and prod (model serving, model
+# registry) are NOT defined here; each env overlay patches them in.
+# Every component that is not in the final spec is Removed by the
+# operator, so overlays always declare the full set they need.
+apiVersion: datasciencecluster.opendatahub.io/v2
+kind: DataScienceCluster
+metadata:
+  name: default-dsc
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  components:
+    dashboard:
+      managementState: Managed
+    workbenches:
+      managementState: Managed

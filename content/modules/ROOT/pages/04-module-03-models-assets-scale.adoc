@@ -1,5 +1,8 @@
 = Module 3: Managing Models and Assets at Scale
 :navtitle: Managing Models and Assets at Scale
+:toc: macro
+:toclevels: 1
+:icons: font
 
 == Learning Objectives
 
@@ -934,7 +937,7 @@ echo "  GPU taints: None detected"
 
 '''
 
-== Module Summary
+== Module summary
 
 In this module you:
 

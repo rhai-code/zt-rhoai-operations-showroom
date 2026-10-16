@@ -1,0 +1,6 @@
+# Policy generation root -- pulls in the ACM PolicyGenerator. Build with:
+#   kustomize build --enable-alpha-plugins --enable-helm .
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generators:
+  - policy/policy-generator.yaml

@@ -1,5 +1,8 @@
 = Module 6: Backups & Disaster Recovery
 :navtitle: Backups & Disaster Recovery
+:toc: macro
+:toclevels: 1
+:icons: font
 
 == Learning Objectives
 
@@ -606,7 +609,7 @@ Several third-party tools offer more comprehensive Kubernetes backup capabilitie
 These third-party tools are listed for awareness and context. Red Hat does not certify or support these tools for RHOAI-specific backup operations. Evaluate them against your organizational requirements and engage the vendors for RHOAI compatibility details.
 ====
 
-== Module Summary
+== Module summary
 
 In this module you:
 

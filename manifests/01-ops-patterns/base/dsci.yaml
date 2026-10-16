@@ -1,0 +1,14 @@
+# Kustomize base -- the shared RHOAI platform configuration.
+# Environment overlays (envs/dev, envs/prod) pull this in with
+# `resources: ../../base` and patch the DSC per environment.
+apiVersion: dscinitialization.opendatahub.io/v2
+kind: DSCInitialization
+metadata:
+  name: default-dsci
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  applicationsNamespace: redhat-ods-applications
+  monitoring:
+    managementState: Managed
+    namespace: redhat-ods-monitoring

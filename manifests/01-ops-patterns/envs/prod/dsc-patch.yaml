@@ -1,0 +1,13 @@
+# Prod DSC patch -- model serving and model registry on.
+apiVersion: datasciencecluster.opendatahub.io/v2
+kind: DataScienceCluster
+metadata:
+  name: default-dsc
+spec:
+  components:
+    kserve:
+      managementState: Managed
+      rawDeploymentServiceConfig: Headless
+    modelregistry:
+      managementState: Managed
+      registriesNamespace: rhoai-model-registries

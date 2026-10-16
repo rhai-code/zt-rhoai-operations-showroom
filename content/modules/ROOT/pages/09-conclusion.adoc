@@ -1,5 +1,6 @@
 = Conclusion
 :navtitle: Conclusion
+:icons: font
 
 == Workshop Summary
 

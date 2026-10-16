@@ -1,0 +1,24 @@
+# Raw YAML -- the dashboard configuration shared by every environment.
+apiVersion: opendatahub.io/v1alpha
+kind: OdhDashboardConfig
+metadata:
+  name: odh-dashboard-config
+  namespace: redhat-ods-applications
+  labels:
+    app.kubernetes.io/part-of: rhods-dashboard
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  dashboardConfig:
+    disableInfo: false
+    disableSupport: false
+    disableClusterManager: true
+    disableTracking: true
+    disableBYONImageStream: false
+    disableISVBadges: false
+    disableCustomServingRuntimes: false
+    disableModelServing: false
+    disableProjectSharing: false
+    disableSharing: false
+  notebookController:
+    enabled: true

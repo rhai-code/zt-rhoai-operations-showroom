@@ -1,0 +1,21 @@
+# App-of-apps root -- a single Application that points at the directory
+# of child Application manifests. Syncing this one object creates the
+# dev and prod children below.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rhoai-ops-patterns
+  namespace: openshift-gitops
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/zt-rhoai-operations-showroom.git
+    targetRevision: main
+    path: manifests/01-ops-patterns/applications
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openshift-gitops
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true

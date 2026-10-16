@@ -1,0 +1,15 @@
+# Prod -- full platform: single-model-serving with headless services and
+# a model registry namespace. The common core (dashboard, workbenches) is
+# inherited from the base, the Helm chart is inflated with prod values.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - path: dsc-patch.yaml
+helmGlobals:
+  chartHome: charts
+helmCharts:
+  - name: rhoai-operators
+    includeCRDs: false
+    releaseName: rhoai-operators

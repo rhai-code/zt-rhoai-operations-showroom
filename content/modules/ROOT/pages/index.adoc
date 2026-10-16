@@ -3,7 +3,19 @@
 
 == Welcome
 
-This workshop covers day-2 operations for Red Hat OpenShift AI (RHOAI) 3.5. You will learn how to secure, scale, upgrade, observe, and protect your RHOAI platform.
+This workshop covers day-2 operations for Red Hat OpenShift AI (RHOAI) 3.5. You will learn how to operate, secure, scale, upgrade, observe, and protect your RHOAI platform.
+
+This workshop is designed for platform administrators and MLOps engineers who are deploying RHOAI 3.5 and need to operate the platform at scale in production.
+
+It is designed to be a follow-up to the **RHOAI Deploy & Configure** workshop.
+
+We want to enable you to understand some of the patterns, practices and tool that are available to you to operate a RHOAI platform. 
+
+There is no single right way to do this and we really do not expect to be able to cover the entire space in this single workshop.
+
+Hopefully you will walk away with a better understanding of the platform and some ideas for how you can start and improve your operations.
+
+If all we teach you is how to "start well" on this journey, we will have succeeded.
 
 == What You Will Learn
 
@@ -26,7 +38,7 @@ Platform administrators and MLOps engineers who have already deployed RHOAI 3.5 
 
 == Estimated Duration
 
-8–12 hours total across all 6 modules.
+4–8 hours total across all 6 modules.
 
 == Getting Started
 

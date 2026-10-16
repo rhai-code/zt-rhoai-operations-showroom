@@ -1,5 +1,8 @@
 = Appendix: Disconnected / Air-Gapped Considerations
 :navtitle: Disconnected Considerations
+:toc: macro
+:toclevels: 1
+:icons: font
 
 [NOTE]
 ====

@@ -1,0 +1,11 @@
+# Dev DSC patch -- explicitly remove what dev does not run.
+apiVersion: datasciencecluster.opendatahub.io/v2
+kind: DataScienceCluster
+metadata:
+  name: default-dsc
+spec:
+  components:
+    kserve:
+      managementState: Removed
+    modelregistry:
+      managementState: Removed

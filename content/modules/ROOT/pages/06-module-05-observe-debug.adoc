@@ -1,5 +1,8 @@
 = Module 5: Observe & Debug
 :navtitle: Observe & Debug
+:toc: macro
+:toclevels: 1
+:icons: font
 
 == Learning Objectives
 
@@ -477,7 +480,7 @@ In RHOAI 3.5, if you need tenant-level metering, your options are:
 
 When RHOAI 3.6 ships with MaaS metering in Dev/Tech Preview, you will be able to evaluate the built-in metering pipeline as a replacement for these custom approaches.
 
-== Module Summary
+== Module summary
 
 In this module you:
 

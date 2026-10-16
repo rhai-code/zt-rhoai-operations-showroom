@@ -1,0 +1,37 @@
+# ACM PolicyGenerator -- wraps each environment overlay into an ACM
+# Policy delivered to clusters matching the placement labels. Generated
+# policies are tagged with the NIST SP 800-53 CM-2 baseline control.
+apiVersion: policy.open-cluster-management.io/v1
+kind: PolicyGenerator
+metadata:
+  name: rhoai-ops-patterns
+placementBindingDefaults:
+  name: rhoai-ops-patterns
+policyDefaults:
+  namespace: openshift-gitops
+  categories:
+    - CM Configuration Management
+  complianceType: "musthave"
+  controls:
+    - CM-2 Baseline Configuration
+  consolidateManifests: false
+  remediationAction: enforce
+  pruneObjectBehavior: "None"
+  severity: medium
+  standards:
+    - NIST SP 800-53
+policies:
+  - name: rhoai-dsc-dev
+    placement:
+      labelSelector:
+        matchLabels:
+          rhoai-ops-patterns/env: dev
+    manifests:
+      - path: envs/dev
+  - name: rhoai-dsc-prod
+    placement:
+      labelSelector:
+        matchLabels:
+          rhoai-ops-patterns/env: prod
+    manifests:
+      - path: envs/prod

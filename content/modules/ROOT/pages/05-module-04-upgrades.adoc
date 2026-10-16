@@ -1,5 +1,8 @@
 = Module 4: Upgrades
 :navtitle: Upgrades
+:toc: macro
+:toclevels: 1
+:icons: font
 
 == Learning Objectives
 
@@ -713,7 +716,7 @@ OLM does **not** support automatic operator rollback. Once an operator upgrade c
 
 '''
 
-== Module Summary
+== Module summary
 
 In this module you:
 
