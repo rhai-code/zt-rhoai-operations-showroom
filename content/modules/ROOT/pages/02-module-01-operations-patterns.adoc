@@ -39,12 +39,19 @@ The phoenix pattern does not mean you never troubleshoot a running cluster. It d
 
 Understanding GitOps and the git strategies and patterns for your platform is critical to the success of your operations. This is sometimes unfamiliar territory for many organizations. Often teams have not been using git and GitOps before and this is a new way of working.
 
+The most important rules of thumb for GitOps is this: scaling out applications, configurations, environments, clusters - are all managed using `directory structures` and `file based configurations`. This makes changes considerably easier to review, understand and manage.
+
 Large platform deployments like RHOAI involve many cooperating components: operators, custom resources, namespace configurations, RBAC policies, application configurations, and much more. The *app-of-apps* pattern organizes these into a hierarchy where a single root ArgoCD Application points to a directory of child Application manifests.
 
 In a multi-cluster environment, you need to decide on your git strategy for managing the configuration of the clusters. Two high-level patterns commonly emerge:
 
 * *Environment-level GitOps* -- A GitOps repository is managed by the platform administrator and is used to manage the configuration of an environment (non-prod, prod).
 * *Monorepo GitOps* -- A single GitOps repository is managed by the platform administrator and is used to manage the configuration of all environments (dev, test, qa, prod, dr).
+
+[TIP]
+====
+In a monorepo - each ACM hub cluster (see ACM later in this module) will have its own `app-of-apps` directory. That way, applications can be shared across hubs, cluster and environment boundaries. Ideally we don't duplicate common applications as much as possible, preferring overlays and helm chart values files to delineate the differences between environments.
+====
 
 The other git dimension to consider is your use or branches, tags and pull requests in an Operational GitOps model.
 
@@ -68,16 +75,16 @@ ArgoCD supports three manifest generation strategies, and a real-world RHOAI dep
 |Strategy |When to Use |RHOAI Example
 
 |*Helm Charts*
-|Parameterized, reusable components with values files per environment
+|Parameterized, reusable components with values files per environment.
 |OLM operator installation charts (`olm-v0-chart`, `olm-v1-chart`) that accept an operator list with names, channels, and versions
 
 |*Kustomize*
-|Base-plus-overlay composition for environment-specific tuning
+|Base-plus-overlay composition for environment-specific tuning. Use a helm chart if you want `mutable values`.
 |`base/` defines the core DSC and DSCI resources; `overlay/dev/` adds environment specific dashboard config and hardware profiles
 
 |*Raw YAML*
-|Simple, static resources that do not need parameterization
-|Namespace definitions, `OdhDashboardConfig` resources, policies
+|Simple, static resources that do not need parameterization. More complex Policies that use sprig based templating.
+|Namespace definitions, `OdhDashboardConfig` resources, ACM policies
 |===
 
 === Worked Example: Changing DSC Config Between Environments
@@ -239,7 +246,7 @@ The repository demonstrates this pattern. The `policy-generator-config.yaml` wra
 cat manifests/01-ops-patterns/policy/policy-generator.yaml
 ----
 
-* **Compliance framework** -- Policies are tagged with NIST SP 800-53 controls (`CM-2 Baseline Configuration`), connecting operational automation to compliance requirements.
+* **Compliance framework** -- Policies are tagged with NIST SP 800-53 controls (`CM-2 Baseline Configuration`), connecting operational automation to compliance requirements. You can use any compliance framework schema you want and if you follow a standard it makes it easier to audit and report on compliance and see easily if a cluster is compliant and what is not from the ACM Compliance Dashboard across a fleet of clusters.
 * **Placement-based targeting** -- Different overlays target different cluster groups: `placement-spokes-demo` for demo cluster environments, `placement-spokes-test` for prerelease testing cluster environments as an example.
 * **Remediation** -- Policies use `remediationAction: enforce`, meaning ACM actively reconciles cluster state, not just reports on it.
 * **pruneObjectBehavior: "None"** -- This is a very important setting that prevents ACM from deleting resources that are not in the policy definition. You don't want to accidentally delete a whole application, namespace or a cluster because of a bad change.
