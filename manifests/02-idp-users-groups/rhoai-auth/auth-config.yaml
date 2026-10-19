@@ -1,9 +1,12 @@
 # The RHOAI Auth CR -- controls which groups can access the RHOAI dashboard,
-# and at what level. Applied in Module 2, Exercise 2.
+# and at what level. Applied in Module 2, Exercise 2. Singleton: the CRD
+# requires the name to be exactly `auth` (the operator creates it on install;
+# this apply ADOPTS the existing CR and changes allowedGroups from
+# `system:authenticated` to the LDAP group).
 apiVersion: services.platform.opendatahub.io/v1alpha1
 kind: Auth
 metadata:
-  name: auth-config
+  name: auth
   namespace: redhat-ods-applications
 spec:
   adminGroups:
