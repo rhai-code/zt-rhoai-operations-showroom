@@ -51,6 +51,26 @@ Open the RHOAI dashboard at:
 
 Verify you can see the dashboard home page with the navigation sidebar.
 
+=== Clone the Workshop Manifests
+
+The manifests referenced by the `oc` commands in later modules live in the workshop repository:
+
+[source,bash,role="execute"]
+----
+git clone https://github.com/rhai-code/zt-rhoai-operations-showroom.git ~/zt-rhoai-operations
+cd ~/zt-rhoai-operations
+ls manifests
+----
+
+You should see the per-module folders (`01-ops-patterns`, `02-idp-users-groups`, `03-models-assets-scale`).
+
+[NOTE]
+====
+All `manifests/...` paths in later modules are relative to the repository root
+(`~/zt-rhoai-operations`). Make sure you are working from that directory when you
+run them.
+====
+
 === Create Your Working Project
 
 Create a project for the workshop exercises:
