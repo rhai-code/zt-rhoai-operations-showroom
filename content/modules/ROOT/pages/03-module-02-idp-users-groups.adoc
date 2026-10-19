@@ -24,17 +24,17 @@ We apply the manifests manually to the cluster in this exercise so we can see th
 
 == Environment Setup: Identity Providers
 
-The identity provider plumbing for this module is pre-provisioned. The `manifests/02-idp-users-groups/` directory in this workshop's GitOps repository contains everything needed to stand it up:
+The identity provider plumbing for this module is pre-provisioned via GitOps in the workshop's automation repository:
 
-* **FreeIPA** deployed in-cluster as an LDAP directory (`freeipa/`)
-* **OpenShift LDAP identity provider** configured against FreeIPA, with FreeIPA groups synced into OpenShift (`openshift-ldap/`)
-* **Keycloak** added as an OIDC identity provider (`keycloak/`)
-* **Users and persona groups** created in FreeIPA and synced into OpenShift (`freeipa/populate.sh`)
+* **FreeIPA** deployed in-cluster as an LDAP directory (realm FEDORACAPITAL.IO)
+* **OCP-native LDAP identity provider** (type: LDAP) -- the OCP OAuth authenticates personas directly against FreeIPA (ldaps://636, the memberOf filter scoping users to the `rhods-users` group), exactly how organisations wire their existing directory into OpenShift
+* **Keycloak for the platform admin** -- the existing Keycloak (rhbk) IdP continues to authenticate the platform admin
+* **Users and persona groups** created in FreeIPA
 * **MaaS governance** for the Lending model -- a modelcar published with performance and standard subscription tiers bound to the persona groups (`maas/`)
 
 [NOTE]
 ====
-This setup moves to the platform automation repository over time; the manifests stay in `manifests/02-idp-users-groups/` until then. If your lab environment was provisioned for you, everything is already running -- verify with the commands in Exercise 1.
+The identity setup is GitOps-managed in the `zt-rhoai-operations-automation` repository; the exercise manifests you apply by hand stay in `manifests/02-idp-users-groups/`. If your lab environment was provisioned for you, everything is already running -- verify with the commands in Exercise 1.
 ====
 
 The provisioned personas model a data-stewardship organization:
@@ -106,7 +106,7 @@ The mapping from the organization to the platform is direct:
 
 |Persona (owner, steward, scientist)
 |OpenShift group per LOB persona
-|Synced from the directory: `lending-data-owners`, `lending-data-stewards`, ...
+|From the directory: `lending-data-owners`, `lending-data-stewards`, ...
 
 |Accountability level
 |RoleBinding in the LOB project
@@ -123,8 +123,8 @@ The mapping from the organization to the platform is direct:
 
 The identity flow that makes this work:
 
-. An identity provider (LDAP, OIDC) authenticates the user and *claims* a username.
-. The username lands in *OpenShift groups*, synced from the directory with `oc adm groups sync`.
+. The OCP-native LDAP identity provider authenticates the persona directly against the FreeIPA directory and *claims* a username (the platform admin continues to auth via the Keycloak IdP).
+. The username lands in *OpenShift groups*, carried by the groups from the directory.
 . Groups are bound to roles in namespaces via *RoleBindings*.
 . RHOAI surfaces read the same groups: the *Auth CR* gates dashboard access, and the dashboard lists exactly the projects the user's groups can see.
 
@@ -133,9 +133,9 @@ The identity flow that makes this work:
 Authentication is OpenShift's job -- RHOAI never has its own user store. Every access decision in the dashboard resolves to an OpenShift group and an OpenShift RoleBinding. Get the groups right and the platform follows.
 ====
 
-== Exercise 1: Verify the Synced Groups
+== Exercise 1: Verify the Federated Groups
 
-Confirm the persona groups synced from FreeIPA are available in OpenShift:
+Confirm the persona groups from FreeIPA are available in OpenShift:
 
 [source,bash,role="execute"]
 ----
@@ -439,7 +439,7 @@ Log in to the RHOAI dashboard as one of the personas:
 . Log in as `sci-eve` (Data Scientist, Lending). The Data Science Projects list shows `rhoai-lending` as a project you can work in, and `rhoai-insurance` as read-only.
 . Try to create a workbench in `rhoai-insurance` -- the dashboard will not allow it.
 . Log out and back in as `own-alice` (Data Owner, Lending). The project settings and access control for `rhoai-lending` are now available to you.
-. Finally, log in as a user who is not in `rhods-users` -- or check the console login page shows both **freeipa-ldap** and **keycloak-oidc** providers alongside any existing ones.
+. Finally, log in as a user who is not in `rhods-users` -- the Auth CR's `allowedGroups` gates dashboard access, so you will see an Access denied page. The console login page shows both **freeipa-ldap** (the OCP-native LDAP IdP against FreeIPA) and **rhbk** (the existing Keycloak realm) providers.
 
 The dashboard is simply rendering the OpenShift groups and RoleBindings you configured -- which is exactly the point. Access control does not stop at namespaces, though -- the next exercise adds Models-as-a-Service to the picture.
 
@@ -670,7 +670,7 @@ You have now configured access control across namespaces, workbenches, and model
 
 == Reference: RHOAI RBAC Surface Area
 
-RHOAI RBAC spans multiple subsystems, each with its own authorization model. This is where access control and identity come into play: every surface reads the OpenShift groups synced from your identity provider. The following table is a comprehensive reference for the RBAC surfaces a platform administrator must understand and configure.
+RHOAI RBAC spans multiple subsystems, each with its own authorization model. This is where access control and identity come into play: every surface reads the OpenShift groups from your identity provider. The following table is a comprehensive reference for the RBAC surfaces a platform administrator must understand and configure.
 
 [cols="2,2,3,2",options="header"]
 |===
@@ -782,7 +782,7 @@ The `cluster-admin` ClusterRole bypasses all RBAC checks. Avoid granting it to d
 
 In this module you:
 
-* Verified the FreeIPA-synced persona groups -- data owners, data stewards, and data scientists per line of business, plus platform roles
+* Verified the FreeIPA persona groups -- data owners, data stewards, and data scientists per line of business, plus platform roles
 * Configured the RHOAI Auth CR with `rhods-admins` and `rhods-users` groups to control dashboard access
 * Created line-of-business Data Science Projects (`rhoai-lending`, `rhoai-insurance`) with RoleBindings per persona: owners get `admin`, stewards and scientists get `edit`
 * Created custom workbench roles and bound them per persona for fine-grained notebook access control
