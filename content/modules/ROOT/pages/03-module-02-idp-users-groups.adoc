@@ -191,17 +191,18 @@ Review the key fields:
 apiVersion: services.platform.opendatahub.io/v1alpha1
 kind: Auth                              # <1>
 metadata:
-  name: auth-config
+  name: auth                            # <2>
   namespace: redhat-ods-applications
 spec:
-  adminGroups:                          # <2>
+  adminGroups:                          # <3>
     - rhods-admins
-  allowedGroups:                        # <3>
+  allowedGroups:                        # <4>
     - rhods-users
 ----
 <1> *Auth CR* -- the RHOAI authorization object; `kind: Auth` from `services.platform.opendatahub.io`.
-<2> *Admin groups* -- can administer RHOAI settings: serving runtimes, cluster settings, accelerator profiles.
-<3> *Allowed groups* -- can access the RHOAI dashboard at all.
+<2> *Singleton* -- the CRD requires the name to be exactly `auth`; the operator creates it on install and this apply adopts the existing CR.
+<3> *Admin groups* -- can administer RHOAI settings: serving runtimes, cluster settings, accelerator profiles.
+<4> *Allowed groups* -- can access the RHOAI dashboard at all.
 
 [source,bash,role="execute"]
 ----
@@ -219,7 +220,7 @@ All eight personas are members of `rhods-users`, so every data owner, steward, a
 
 [source,bash,role="execute"]
 ----
-oc get auth auth-config -n redhat-ods-applications -o jsonpath='{.spec}' | python3 -m json.tool
+oc get auth auth -n redhat-ods-applications -o jsonpath='{.spec}' | python3 -m json.tool
 ----
 
 Expected output:
