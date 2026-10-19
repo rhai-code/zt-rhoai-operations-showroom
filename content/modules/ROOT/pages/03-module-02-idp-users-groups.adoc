@@ -354,7 +354,7 @@ done
 
 [NOTE]
 ====
-The persona-to-workbench-role mapping follows accountability: data owners maintain the full workbench lifecycle, data stewards edit workbench configuration, and data scientists operate workbenches (start, stop, update) without deleting them or the storage behind them.
+The persona-to-workbench-role mapping follows accountability: data owners maintain the full workbench lifecycle, data stewards edit workbench configuration, and data scientists create and operate workbenches (start, stop, update) without deleting them or the storage behind them.
 ====
 
 === Verify
@@ -393,33 +393,94 @@ The platform authorization model is fully configured. Now prove it -- log in as 
 
 == Exercise 5: Prove the Model -- Persona Access Walkthrough
 
-Everything so far is configuration. This exercise verifies the RBAC decisions as the personas themselves, using `oc auth can-i` impersonation -- no credential switching required:
+Everything so far is configuration. This exercise verifies the RBAC decisions as the personas themselves, using `oc auth can-i` impersonation -- no credential switching required. Impersonate the persona *and* their groups: groups are claimed at authentication, and impersonation does not run it, so every decision must ride the persona's groups along with `--as-group`.
+
+[IMPORTANT]
+====
+`--as` alone impersonates a groupless user -- group-bound RoleBindings only apply when the groups ride along with `--as-group`. Without them, every decision returns `no`, including the ones that should be `yes` -- even for a data owner with `admin`. This is the single most common impersonation mistake.
+====
+
+The lending data scientist can create workbenches in their own LOB:
 
 [source,bash,role="execute"]
 ----
-# The lending data scientist can create workbenches in their own LOB...
-oc auth can-i create notebooks.kubeflow.org -n rhoai-lending --as=sci-eve
-
-# ...but not in the insurance LOB -- line-of-business isolation
-oc auth can-i create notebooks.kubeflow.org -n rhoai-insurance --as=sci-eve
-
-# A data scientist cannot govern the project
-oc auth can-i create rolebindings.rbac.authorization.k8s.io -n rhoai-lending --as=sci-eve
-
-# ...but the data owner can -- that is what ownership means
-oc auth can-i create rolebindings.rbac.authorization.k8s.io -n rhoai-lending --as=own-alice
-
-# The insurance steward cannot touch lending, and vice versa
-oc auth can-i create notebooks.kubeflow.org -n rhoai-lending --as=ste-dave
+oc auth can-i create notebooks.kubeflow.org -n rhoai-lending \
+  --as=sci-eve --as-group=lending-data-scientists --as-group=rhods-users
 ----
 
 Expected output:
 
 ----
 yes
+----
+
+But not in the insurance LOB -- line-of-business isolation:
+
+[source,bash,role="execute"]
+----
+oc auth can-i create notebooks.kubeflow.org -n rhoai-insurance \
+  --as=sci-eve --as-group=lending-data-scientists --as-group=rhods-users
+----
+
+Expected output:
+
+----
 no
+----
+
+A data scientist cannot govern the project:
+
+[source,bash,role="execute"]
+----
+oc auth can-i create rolebindings.rbac.authorization.k8s.io -n rhoai-lending \
+  --as=sci-eve --as-group=lending-data-scientists --as-group=rhods-users
+----
+
+Expected output:
+
+----
 no
+----
+
+But the data owner can -- that is what ownership means:
+
+[source,bash,role="execute"]
+----
+oc auth can-i create rolebindings.rbac.authorization.k8s.io -n rhoai-lending \
+  --as=own-alice --as-group=lending-data-owners --as-group=rhods-users
+----
+
+Expected output:
+
+----
 yes
+----
+
+The insurance steward cannot touch lending:
+
+[source,bash,role="execute"]
+----
+oc auth can-i create notebooks.kubeflow.org -n rhoai-lending \
+  --as=ste-dave --as-group=insurance-data-stewards --as-group=rhods-users
+----
+
+Expected output:
+
+----
+no
+----
+
+And the lending steward cannot touch insurance -- the same isolation in the other direction:
+
+[source,bash,role="execute"]
+----
+oc auth can-i create notebooks.kubeflow.org -n rhoai-insurance \
+  --as=ste-carol --as-group=lending-data-stewards --as-group=rhods-users
+----
+
+Expected output:
+
+----
 no
 ----
 
@@ -431,7 +492,7 @@ The results in full:
 
 |create notebooks, `rhoai-lending`, sci-eve
 |yes
-|edit + workbench-operator
+|workbench-operator
 |Own line of business
 
 |create notebooks, `rhoai-insurance`, sci-eve
@@ -450,6 +511,11 @@ The results in full:
 |Owners govern
 
 |create notebooks, `rhoai-lending`, ste-dave
+|no
+|view only
+|LOB isolation
+
+|create notebooks, `rhoai-insurance`, ste-carol
 |no
 |view only
 |LOB isolation
