@@ -241,12 +241,13 @@ With dashboard access in place, the next step is to give each line of business i
 
 == Exercise 3: Line-of-Business Projects and RoleBindings
 
-Create one Data Science Project per line of business and bind roles per persona:
+Create one Data Science Project per line of business, label it so it appears in the RHOAI dashboard, and bind roles per persona:
 
 [source,bash,role="execute"]
 ----
 for lob in lending insurance; do
   oc new-project rhoai-${lob}
+  oc label namespace rhoai-${lob} opendatahub.io/dashboard="true" --overwrite
   oc adm policy add-role-to-group admin ${lob}-data-owners -n rhoai-${lob}
   oc adm policy add-role-to-group edit ${lob}-data-stewards -n rhoai-${lob}
   oc adm policy add-role-to-group edit ${lob}-data-scientists -n rhoai-${lob}
@@ -254,12 +255,35 @@ for lob in lending insurance; do
 done
 ----
 
+[IMPORTANT]
+====
+The `opendatahub.io/dashboard: "true"` label is what makes a namespace show up in the RHOAI dashboard as a *Data Science Project* -- a bare `oc new-project` namespace is invisible to it. Projects created from the dashboard get the label automatically; namespaces created from the CLI do not, so label them explicitly.
+====
+
 [NOTE]
 ====
 RoleBindings are namespace-scoped, so this is where line-of-business isolation comes from: `sci-eve` has `edit` in `rhoai-lending` but only `view` in `rhoai-insurance`. A lending scientist cannot see insurance data science work beyond a read-only glance.
 ====
 
 === Verify
+
+Confirm the projects carry the dashboard label -- this is the list the RHOAI dashboard renders:
+
+[source,bash,role="execute"]
+----
+oc get namespaces -l opendatahub.io/dashboard=true \
+  -o custom-columns=NAME:.metadata.name
+----
+
+Expected output:
+
+----
+NAME
+rhoai-insurance
+rhoai-lending
+----
+
+Then the rolebindings:
 
 [source,bash,role="execute"]
 ----
@@ -785,7 +809,7 @@ In this module you:
 
 * Verified the FreeIPA persona groups -- data owners, data stewards, and data scientists per line of business, plus platform roles
 * Configured the RHOAI Auth CR with `rhods-admins` and `rhods-users` groups to control dashboard access
-* Created line-of-business Data Science Projects (`rhoai-lending`, `rhoai-insurance`) with RoleBindings per persona: owners get `admin`, stewards and scientists get `edit`
+* Created line-of-business Data Science Projects (`rhoai-lending`, `rhoai-insurance`), labeled `opendatahub.io/dashboard="true"` so they appear in the dashboard, with RoleBindings per persona: owners get `admin`, stewards and scientists get `edit`
 * Created custom workbench roles and bound them per persona for fine-grained notebook access control
 * Proved the model with `oc auth can-i` impersonation and dashboard walkthroughs as different personas
 * Configured MaaS performance tiers bound to groups for the Lending model, and proved tier-bound group enforcement with persona API keys
