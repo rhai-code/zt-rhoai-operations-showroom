@@ -1,0 +1,23 @@
+# Performance tier -- the Lending data owners and data stewards.
+# High token budget, elevated priority. The data owner decides who gets access
+# to the LOB model and at what tier; this subscription IS the tier.
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: lending-performance-tier
+  namespace: models-as-a-service   # the only namespace maas-api reads subscriptions from
+spec:
+  owner:
+    groups:
+      - name: lending-data-owners
+      - name: lending-data-stewards
+  priority: 1
+  tokenMetadata:
+    costCenter: lending            # metering per line of business
+    organizationId: lending
+  modelRefs:
+    - name: qwen25-05b-maas
+      namespace: rhoai-lending
+      tokenRateLimits:
+        - limit: 100000
+          window: 1m

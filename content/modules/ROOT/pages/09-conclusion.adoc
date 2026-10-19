@@ -10,9 +10,9 @@ Congratulations on completing the RHOAI 3.5 Operations Workshop. Here is a recap
 
 You explored platform-as-code principles, the GitOps operating model with ArgoCD, multi-cluster management with ACM, security baselines with ACS, and secrets management strategies. You deployed the OpenShift GitOps Operator and toured an ArgoCD-managed RHOAI deployment.
 
-=== Module 2: IDP, Users & Group Management
+=== Module 2: Data Stewardship, Users & Access Control
 
-You configured FreeIPA (LDAP) and Keycloak (OIDC) identity providers, created persona-based groups for data engineers and data scientists, configured RHOAI Auth CR access restrictions, built a wine quality classifier using Feature Store, and registered it in the model registry.
+You modeled a data-stewardship organization on the platform -- data owners, data stewards, and data scientists per line of business (Lending, Insurance) -- configured the RHOAI Auth CR access restrictions, bound per-persona roles in line-of-business projects, created custom workbench roles, configured MaaS performance tiers bound to groups for the Lending model, and proved the RBAC decisions with persona-based access walkthroughs.
 
 === Module 3: Managing Models and Assets at Scale
 

@@ -375,4 +375,4 @@ In this module you:
 * Demonstrated GitOps self-healing by introducing and watching ArgoCD revert a manual namespace change
 * Reviewed multi-cluster management with ACM policy generation, baseline security with ACS, secrets management strategies, and SOP practices
 
-Proceed to xref:03-module-02-idp-users-groups.adoc[Module 2: IDP, Users & Group Management].
+Proceed to xref:03-module-02-idp-users-groups.adoc[Module 2: Data Stewardship, Users & Access Control].

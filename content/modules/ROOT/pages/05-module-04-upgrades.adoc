@@ -15,6 +15,11 @@ By the end of this module you will be able to:
 * Describe MaaS upgrade considerations across RHOAI 3.4, 3.5, and 3.6
 * Create a pre-upgrade checklist and understand rollback limitations
 
+[IMPORTANT]
+====
+We apply the manifests manually to the cluster in this exercise so we can see the changes and learn the process. In a production environment, you would use GitOps to apply the manifests to the cluster. We do not practice what we preach as far as GitOps in this workshop.
+====
+
 == Estimated Duration
 
 45--60 minutes

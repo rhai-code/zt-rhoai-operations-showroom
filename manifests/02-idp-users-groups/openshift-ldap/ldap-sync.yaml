@@ -1,0 +1,26 @@
+kind: LDAPSyncConfig
+apiVersion: v1
+url: ldaps://freeipa.freeipa.svc.cluster.local:636
+bindDN: uid=admin,cn=users,cn=accounts,dc=example,dc=com
+bindPassword:
+  file: /tmp/bind-password
+ca: /tmp/freeipa-ca.crt
+insecure: false
+rfc2307:
+  groupsQuery:
+    baseDN: cn=groups,cn=accounts,dc=example,dc=com
+    scope: sub
+    derefAliases: never
+    filter: (objectClass=groupOfNames)
+  groupUIDAttribute: dn
+  groupNameAttributes:
+  - cn
+  groupMembershipAttributes:
+  - member
+  usersQuery:
+    baseDN: cn=users,cn=accounts,dc=example,dc=com
+    scope: sub
+    derefAliases: never
+  userUIDAttribute: dn
+  userNameAttributes:
+  - uid

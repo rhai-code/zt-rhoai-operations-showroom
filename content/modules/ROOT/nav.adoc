@@ -4,8 +4,8 @@
 .Module 1: Operations Patterns
 * xref:02-module-01-operations-patterns.adoc[Operations Guidelines and Patterns]
 
-.Module 2: Identity and Access
-* xref:03-module-02-idp-users-groups.adoc[IDP, Users & Group Management]
+.Module 2: Data Stewardship & Access Control
+* xref:03-module-02-idp-users-groups.adoc[Data Stewardship, Users & Access Control]
 
 .Module 3: Models and Assets
 * xref:04-module-03-models-assets-scale.adoc[Managing Models and Assets at Scale]

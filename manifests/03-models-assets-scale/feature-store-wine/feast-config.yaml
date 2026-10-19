@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feast-feature-repo
+  namespace: wine-classifier
+data:
+  feature_store.yaml: |
+    project: wine_quality
+    registry: /tmp/feast-registry/registry.db
+    provider: local
+    online_store:
+      type: sqlite
+      path: /tmp/feast-online/online_store.db
+    entity_key_serialization_version: 3
+  wine_features.py: |
+    from feast import Entity, FeatureView, Field, FileSource
+    from feast.types import Float64, Int64
+    from datetime import timedelta
+
+    wine_sample = Entity(
+        name="wine_id",
+        join_keys=["wine_id"],
+    )
+
+    wine_source = FileSource(
+        path="/data/wine-quality.parquet",
+        timestamp_field="event_timestamp",
+    )
+
+    wine_features = FeatureView(
+        name="wine_features",
+        entities=[wine_sample],
+        ttl=timedelta(days=365),
+        schema=[
+            Field(name="fixed_acidity", dtype=Float64),
+            Field(name="volatile_acidity", dtype=Float64),
+            Field(name="citric_acid", dtype=Float64),
+            Field(name="residual_sugar", dtype=Float64),
+            Field(name="chlorides", dtype=Float64),
+            Field(name="free_sulfur_dioxide", dtype=Float64),
+            Field(name="total_sulfur_dioxide", dtype=Float64),
+            Field(name="density", dtype=Float64),
+            Field(name="ph", dtype=Float64),
+            Field(name="sulphates", dtype=Float64),
+            Field(name="alcohol", dtype=Float64),
+            Field(name="quality", dtype=Int64),
+        ],
+        source=wine_source,
+        online=True,
+    )

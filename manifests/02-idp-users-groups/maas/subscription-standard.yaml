@@ -1,0 +1,22 @@
+# Standard tier -- the Lending data scientists.
+# Lower token budget. Subscription tiers bound to groups are how MaaS permissions
+# work: there is no performanceTier field, the tier IS the subscription.
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: lending-standard-tier
+  namespace: models-as-a-service   # the only namespace maas-api reads subscriptions from
+spec:
+  owner:
+    groups:
+      - name: lending-data-scientists
+  priority: 0
+  tokenMetadata:
+    costCenter: lending
+    organizationId: lending
+  modelRefs:
+    - name: qwen25-05b-maas
+      namespace: rhoai-lending
+      tokenRateLimits:
+        - limit: 10000
+          window: 1m

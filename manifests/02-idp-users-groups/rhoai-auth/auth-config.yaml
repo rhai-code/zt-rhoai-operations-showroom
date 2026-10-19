@@ -1,0 +1,12 @@
+# The RHOAI Auth CR -- controls which groups can access the RHOAI dashboard,
+# and at what level. Applied in Module 2, Exercise 2.
+apiVersion: services.platform.opendatahub.io/v1alpha1
+kind: Auth
+metadata:
+  name: auth-config
+  namespace: redhat-ods-applications
+spec:
+  adminGroups:
+    - rhods-admins
+  allowedGroups:
+    - rhods-users

@@ -15,6 +15,11 @@ By the end of this module you will be able to:
 * Describe the llm-d Perses observability dashboards and their role in LLM serving visibility
 * Describe the MaaS external metering architecture planned for RHOAI 3.6
 
+[IMPORTANT]
+====
+We apply the manifests manually to the cluster in this exercise so we can see the changes and learn the process. In a production environment, you would use GitOps to apply the manifests to the cluster. We do not practice what we preach as far as GitOps in this workshop.
+====
+
 == Exercise 1: Explore RHOAI Dashboard Monitoring
 
 RHOAI 3.5 ships with built-in monitoring that surfaces key platform health metrics through the OpenShift web console. In this exercise you will tour those dashboards and identify the metrics that matter most for day-2 operations.

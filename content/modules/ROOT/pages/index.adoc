@@ -20,7 +20,7 @@ If all we teach you is how to "start well" on this journey, we will have succeed
 == What You Will Learn
 
 * **Module 1** — Operations guidelines and patterns: platform-as-code, GitOps, multi-cluster management, secrets management
-* **Module 2** — Identity provider integration, user and group management, persona-based RBAC with a wine quality classifier exercise
+* **Module 2** — Data stewardship organization model: data owners, stewards, and scientists per line of business, the RHOAI Auth CR, MaaS performance tiers bound to groups, and hands-on persona-based RBAC across the platform
 * **Module 3** — Managing custom workbench images, ModelCars, model registry, Kueue GPU scheduling concepts, and llm-d serving topologies
 * **Module 4** — RHOAI operator upgrade lifecycle, dependent operator pinning, and MaaS version management
 * **Module 5** — Built-in RHOAI monitoring, metrics export, and MaaS metering (Dev/Tech Preview)

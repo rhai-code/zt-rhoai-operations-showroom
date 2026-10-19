@@ -21,6 +21,11 @@ By the end of this module you will be able to:
 The backup and restore procedures in this module are best-practices recommendations based on the OADP operator capabilities. They are not officially documented RHOAI procedures. Red Hat supports OADP as a standalone product, and the procedures here apply OADP to RHOAI namespaces using standard Kubernetes resource backup patterns.
 ====
 
+[IMPORTANT]
+====
+We apply the manifests manually to the cluster in this exercise so we can see the changes and learn the process. In a production environment, you would use GitOps to apply the manifests to the cluster. We do not practice what we preach as far as GitOps in this workshop.
+====
+
 == Exercise 1: Install and Configure OADP Operator
 
 OADP (OpenShift API for Data Protection) is the Red Hat-supported backup solution for OpenShift application workloads. It is built on the Velero open-source project and supports backup, restore, and migration of Kubernetes resources and persistent volumes.

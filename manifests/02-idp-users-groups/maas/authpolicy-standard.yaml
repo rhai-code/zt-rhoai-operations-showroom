@@ -1,0 +1,14 @@
+# Binds API-key authentication to the published model for the standard tier.
+# Subjects must match the standard-tier subscription's owner.groups.
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSAuthPolicy
+metadata:
+  name: lending-standard-tier-auth
+  namespace: models-as-a-service
+spec:
+  subjects:
+    groups:
+      - name: lending-data-scientists
+  modelRefs:
+    - name: qwen25-05b-maas
+      namespace: rhoai-lending

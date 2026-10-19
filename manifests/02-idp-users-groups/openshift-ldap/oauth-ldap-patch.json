@@ -1,0 +1,28 @@
+{
+  "spec": {
+    "identityProviders": [
+      {
+        "name": "freeipa-ldap",
+        "type": "LDAP",
+        "mappingMethod": "claim",
+        "ldap": {
+          "attributes": {
+            "id": ["dn"],
+            "email": ["mail"],
+            "name": ["cn"],
+            "preferredUsername": ["uid"]
+          },
+          "bindDN": "uid=admin,cn=users,cn=accounts,dc=example,dc=com",
+          "bindPassword": {
+            "name": "freeipa-ldap-secret"
+          },
+          "ca": {
+            "name": "freeipa-ca"
+          },
+          "insecure": false,
+          "url": "ldaps://freeipa.freeipa.svc.cluster.local:636/cn=users,cn=accounts,dc=example,dc=com?uid"
+        }
+      }
+    ]
+  }
+}

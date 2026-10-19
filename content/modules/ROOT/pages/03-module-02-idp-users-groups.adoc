@@ -1,5 +1,5 @@
-= Module 2: Integrate with IDP, Users & Group Management
-:navtitle: IDP, Users & Group Management
+= Module 2: Data Stewardship, Users & Access Control
+:navtitle: Data Stewardship & Access Control
 :toc: macro
 :toclevels: 1
 :icons: font
@@ -8,299 +8,134 @@
 
 By the end of this module you will be able to:
 
-* Deploy FreeIPA in-cluster as an LDAP directory using Helm
-* Configure an LDAP identity provider on OpenShift
-* Configure an OIDC identity provider using Keycloak
-* Create persona-based groups for data science team members
-* Configure the RHOAI Auth CR to restrict dashboard access to authorized groups
-* Build and serve a wine quality classifier using Feature Store (Feast)
-* Register a trained model in the RHOAI model registry
-* Describe the full RBAC surface area across RHOAI subsystems
+* Describe a data-stewardship organization model -- a line of business with data owners, data stewards, and data scientists
+* Explain how the organization model maps onto OpenShift groups, Data Science Projects, and RoleBindings
+* Configure the RHOAI Auth CR (`adminGroups`, `allowedGroups`) to control dashboard access
+* Configure MaaS performance tiers bound to groups for a line-of-business model
+* Bind OpenShift roles to line-of-business projects for least-privilege access
+* Create custom workbench roles for fine-grained notebook access control
+* Verify RBAC decisions as different personas with `oc auth can-i` and the RHOAI dashboard
+* Describe the full RBAC surface area across RHOAI subsystems and where identity comes into play
 
-== Identity Provider Architecture
+[IMPORTANT]
+====
+We apply the manifests manually to the cluster in this exercise so we can see the changes and learn the process. In a production environment, you would use GitOps to apply the manifests to the cluster. We do not practice what we preach as far as GitOps in this workshop.
+====
 
-RHOAI inherits its authentication from OpenShift, which supports multiple identity providers simultaneously. In this module you will configure two complementary providers:
+== Environment Setup: Identity Providers
 
-* **LDAP via FreeIPA** -- Provides centralized user and group directory services. Groups defined in FreeIPA map directly to OpenShift groups, enabling persona-based access control.
-* **OIDC via Keycloak** -- Provides federated single sign-on with support for multi-factor authentication, social login, and fine-grained authorization flows.
+The identity provider plumbing for this module is pre-provisioned. The `manifests/02-idp-users-groups/` directory in this workshop's GitOps repository contains everything needed to stand it up:
 
-In production environments, these providers connect to existing enterprise directories (Active Directory, Okta, Azure AD). This workshop deploys standalone instances to demonstrate the integration patterns without requiring external infrastructure.
-
-== Exercise 1: Deploy FreeIPA Using Helm
-
-FreeIPA provides LDAP directory services, Kerberos authentication, DNS, and certificate authority functions. You will deploy it as the primary user directory for this workshop.
-
-=== 1.1 Add the Helm Repository
-
-[source,bash,role="execute"]
-----
-helm repo add freeipa https://freeipa.github.io/helm-charts
-helm repo update
-----
-
-=== 1.2 Create the FreeIPA Namespace
-
-[source,bash,role="execute"]
-----
-oc new-project freeipa
-----
-
-=== 1.3 Create the FreeIPA Values File
-
-[source,bash,role="execute",subs="attributes"]
-----
-cat <<EOF > /tmp/freeipa-values.yaml
-replicas: 1
-image:
-  repository: quay.io/freeipa/freeipa-server
-  tag: fedora-latest
-server:
-  realm: EXAMPLE.COM
-  domain: example.com
-  adminPassword: "{password}"
-  dsPassword: "{password}"
-persistence:
-  enabled: true
-  size: 5Gi
-service:
-  type: ClusterIP
-route:
-  enabled: true
-  host: ipa.{openshift_cluster_ingress_domain}
-securityContext:
-  runAsUser: 0
-  runAsGroup: 0
-  fsGroup: 0
-EOF
-----
-
-=== 1.4 Install FreeIPA
-
-[source,bash,role="execute"]
-----
-helm upgrade --install freeipa freeipa/freeipa-server \
-  -n freeipa \
-  -f /tmp/freeipa-values.yaml \
-  --timeout 10m \
-  --wait
-----
+* **FreeIPA** deployed in-cluster as an LDAP directory (`freeipa/`)
+* **OpenShift LDAP identity provider** configured against FreeIPA, with FreeIPA groups synced into OpenShift (`openshift-ldap/`)
+* **Keycloak** added as an OIDC identity provider (`keycloak/`)
+* **Users and persona groups** created in FreeIPA and synced into OpenShift (`freeipa/populate.sh`)
+* **MaaS governance** for the Lending model -- a modelcar published with performance and standard subscription tiers bound to the persona groups (`maas/`)
 
 [NOTE]
 ====
-FreeIPA initial setup takes 5-8 minutes as it configures the LDAP directory, Kerberos KDC, and internal CA. The `--wait` flag ensures the Helm command does not return until the pod is healthy.
+This setup moves to the platform automation repository over time; the manifests stay in `manifests/02-idp-users-groups/` until then. If your lab environment was provisioned for you, everything is already running -- verify with the commands in Exercise 1.
 ====
 
-=== 1.5 Populate Users and Groups
+The provisioned personas model a data-stewardship organization:
 
-Once FreeIPA is running, create workshop users and organize them into persona-based groups:
+[cols="1,2,2,1",options="header"]
+|===
+|User |Persona |Group(s) |Line of Business
 
-[source,bash,role="execute",subs="attributes"]
-----
-FreeIPA_POD=$(oc get pods -n freeipa -l app.kubernetes.io/name=freeipa-server -o jsonpath='{.items[0].metadata.name}')
+|own-alice
+|Data Owner
+|lending-data-owners, rhods-users
+|Lending
 
-oc exec -n freeipa $FreeIPA_POD -- bash -c '
-  echo "{password}" | kinit admin
+|ste-carol
+|Data Steward
+|lending-data-stewards, rhods-users
+|Lending
 
-  # Create persona groups
-  ipa group-add data-scientists --desc="Data Scientists"
-  ipa group-add data-engineers --desc="Data Engineers"
-  ipa group-add ml-engineers --desc="ML Engineers"
-  ipa group-add rhods-admins --desc="RHOAI Administrators"
-  ipa group-add rhods-users --desc="RHOAI Users"
+|sci-eve
+|Data Scientist
+|lending-data-scientists, rhods-users
+|Lending
 
-  # Create users
-  for user in ds-alice ds-bob; do
-    ipa user-add $user --first=${user##*-} --last=Workshop \
-      --password <<< $"{password}\n{password}\n"
-    ipa group-add-member data-scientists --users=$user
-    ipa group-add-member rhods-users --users=$user
-  done
+|own-bob
+|Data Owner
+|insurance-data-owners, rhods-users
+|Insurance
 
-  for user in de-carol de-dave; do
-    ipa user-add $user --first=${user##*-} --last=Workshop \
-      --password <<< $"{password}\n{password}\n"
-    ipa group-add-member data-engineers --users=$user
-    ipa group-add-member rhods-users --users=$user
-  done
+|ste-dave
+|Data Steward
+|insurance-data-stewards, rhods-users
+|Insurance
 
-  for user in mle-eve mle-frank; do
-    ipa user-add $user --first=${user##*-} --last=Workshop \
-      --password <<< $"{password}\n{password}\n"
-    ipa group-add-member ml-engineers --users=$user
-    ipa group-add-member rhods-users --users=$user
-  done
+|sci-frank
+|Data Scientist
+|insurance-data-scientists, rhods-users
+|Insurance
 
-  # Add admin user to rhods-admins
-  ipa user-add ops-admin --first=Ops --last=Admin \
-    --password <<< $"{password}\n{password}\n"
-  ipa group-add-member rhods-admins --users=ops-admin
-  ipa group-add-member rhods-users --users=ops-admin
+|mle-gina
+|ML Engineer
+|ml-engineers, rhods-users
+|Platform
 
-  echo "Users and groups created successfully"
-'
-----
+|ops-admin
+|Platform Admin
+|rhods-admins, rhods-users
+|Platform
+|===
 
-=== Verify
+== The Data Stewardship Organization Model
 
-[source,bash,role="execute"]
-----
-oc exec -n freeipa $FreeIPA_POD -- bash -c 'echo "{password}" | kinit admin && ipa group-find --all | grep -E "Group name:|GID|Member users"'
-----
+Enterprises do not organize their data science platform around job titles -- they organize it around *lines of business* and the people accountable for their data. Assume an organization that is organized around data stewardship, where a line of business has data owners. This is what we want to model when configuring the platform:
 
-You should see the five groups (`data-scientists`, `data-engineers`, `ml-engineers`, `rhods-admins`, `rhods-users`) with their member users listed.
+* A *line of business* (LOB) -- for example Lending or Insurance -- owns a portfolio of data assets and the models built from them.
+* *Data owners* are accountable for the LOB's data. They approve access, govern the project, and answer for how the data is used.
+* *Data stewards* implement that governance day to day. They curate data products, manage quality, and prepare data for the scientists.
+* *Data scientists* consume the governed data, build and train models, and iterate in workbenches.
+* *ML engineers* operate the platform layer -- serving runtimes, pipelines, monitoring -- across lines of business.
 
-[source,bash,role="execute"]
-----
-oc get route -n freeipa
-----
+The mapping from the organization to the platform is direct:
 
-Expected output:
+[cols="2,2,3",options="header"]
+|===
+|Organization |Platform Object |Mechanism
 
-----
-NAME      HOST/PORT                              PATH   SERVICES   PORT   TERMINATION
-freeipa   ipa.apps.cluster.example.com                  freeipa    443    passthrough
-----
+|Line of business
+|Data Science Project (namespace)
+|One namespace per LOB: `rhoai-lending`, `rhoai-insurance`
 
-== Exercise 2: Configure LDAP Identity Provider on OpenShift
+|Persona (owner, steward, scientist)
+|OpenShift group per LOB persona
+|Synced from the directory: `lending-data-owners`, `lending-data-stewards`, ...
 
-Now configure OpenShift to authenticate users against the FreeIPA LDAP directory.
+|Accountability level
+|RoleBinding in the LOB project
+|`admin` for owners, `edit` for stewards and scientists, `view` for everyone else
 
-=== 2.1 Retrieve the FreeIPA CA Certificate
+|Fine-grained notebook access
+|Custom workbench roles
+|ClusterRoles labeled `opendatahub.io/role-type: workbench`
 
-[source,bash,role="execute"]
-----
-oc exec -n freeipa $FreeIPA_POD -- cat /etc/ipa/ca.crt > /tmp/freeipa-ca.crt
-----
+|Who may use RHOAI at all
+|RHOAI Auth CR
+|`adminGroups` / `allowedGroups`
+|===
 
-=== 2.2 Create the CA ConfigMap
+The identity flow that makes this work:
 
-[source,bash,role="execute"]
-----
-oc create configmap freeipa-ca \
-  --from-file=ca.crt=/tmp/freeipa-ca.crt \
-  -n openshift-config
-----
+. An identity provider (LDAP, OIDC) authenticates the user and *claims* a username.
+. The username lands in *OpenShift groups*, synced from the directory with `oc adm groups sync`.
+. Groups are bound to roles in namespaces via *RoleBindings*.
+. RHOAI surfaces read the same groups: the *Auth CR* gates dashboard access, and the dashboard lists exactly the projects the user's groups can see.
 
-=== 2.3 Create the Bind Password Secret
+[IMPORTANT]
+====
+Authentication is OpenShift's job -- RHOAI never has its own user store. Every access decision in the dashboard resolves to an OpenShift group and an OpenShift RoleBinding. Get the groups right and the platform follows.
+====
 
-[source,bash,role="execute",subs="attributes"]
-----
-oc create secret generic freeipa-ldap-secret \
-  --from-literal=bindPassword="{password}" \
-  -n openshift-config
-----
+== Exercise 1: Verify the Synced Groups
 
-=== 2.4 Patch the OAuth Configuration
-
-[source,bash,role="execute"]
-----
-oc patch oauth cluster --type=merge -p '
-{
-  "spec": {
-    "identityProviders": [
-      {
-        "name": "freeipa-ldap",
-        "type": "LDAP",
-        "mappingMethod": "claim",
-        "ldap": {
-          "attributes": {
-            "id": ["dn"],
-            "email": ["mail"],
-            "name": ["cn"],
-            "preferredUsername": ["uid"]
-          },
-          "bindDN": "uid=admin,cn=users,cn=accounts,dc=example,dc=com",
-          "bindPassword": {
-            "name": "freeipa-ldap-secret"
-          },
-          "ca": {
-            "name": "freeipa-ca"
-          },
-          "insecure": false,
-          "url": "ldaps://freeipa.freeipa.svc.cluster.local:636/cn=users,cn=accounts,dc=example,dc=com?uid"
-        }
-      }
-    ]
-  }
-}'
-----
-
-=== 2.5 Wait for OAuth Pods to Roll
-
-The OAuth server pods will restart to pick up the new configuration:
-
-[source,bash,role="execute"]
-----
-oc rollout status deployment/oauth-openshift -n openshift-authentication --timeout=120s
-----
-
-=== 2.6 Sync LDAP Groups to OpenShift
-
-Create a sync configuration to pull FreeIPA groups into OpenShift:
-
-[source,bash,role="execute"]
-----
-cat <<'EOF' > /tmp/ldap-sync.yaml
-kind: LDAPSyncConfig
-apiVersion: v1
-url: ldaps://freeipa.freeipa.svc.cluster.local:636
-bindDN: uid=admin,cn=users,cn=accounts,dc=example,dc=com
-bindPassword:
-  file: /tmp/bind-password
-ca: /tmp/freeipa-ca.crt
-insecure: false
-rfc2307:
-  groupsQuery:
-    baseDN: cn=groups,cn=accounts,dc=example,dc=com
-    scope: sub
-    derefAliases: never
-    filter: (objectClass=groupOfNames)
-  groupUIDAttribute: dn
-  groupNameAttributes:
-  - cn
-  groupMembershipAttributes:
-  - member
-  usersQuery:
-    baseDN: cn=users,cn=accounts,dc=example,dc=com
-    scope: sub
-    derefAliases: never
-  userUIDAttribute: dn
-  userNameAttributes:
-  - uid
-EOF
-----
-
-[source,bash,role="execute",subs="attributes"]
-----
-echo -n "{password}" > /tmp/bind-password
-oc adm groups sync --sync-config=/tmp/ldap-sync.yaml --confirm
-rm /tmp/bind-password
-----
-
-=== Verify
-
-Test LDAP login with one of the created users:
-
-[source,bash,role="execute",subs="attributes"]
-----
-oc login -u ds-alice -p {password} {openshift_api_url}
-oc whoami
-----
-
-Expected output:
-
-----
-ds-alice
-----
-
-Switch back to the admin user:
-
-[source,bash,role="execute",subs="attributes"]
-----
-oc login -u {user} -p {password} {openshift_api_url}
-----
-
-Verify that groups were synced:
+Confirm the persona groups synced from FreeIPA are available in OpenShift:
 
 [source,bash,role="execute"]
 ----
@@ -310,263 +145,75 @@ oc get groups
 Expected output:
 
 ----
-NAME              USERS
-data-scientists   ds-alice, ds-bob
-data-engineers    de-carol, de-dave
-ml-engineers      mle-eve, mle-frank
-rhods-admins      ops-admin
-rhods-users       ds-alice, ds-bob, de-carol, de-dave, mle-eve, mle-frank, ops-admin
-----
-
-== Exercise 3: Configure OIDC Identity Provider Using Keycloak
-
-Keycloak provides OpenID Connect (OIDC) authentication with support for federated identity, multi-factor authentication, and fine-grained authorization.
-
-=== 3.1 Verify Keycloak Is Running
-
-Your workshop environment includes a pre-deployed Keycloak instance. Verify it is accessible:
-
-[source,bash,role="execute"]
-----
-oc get pods -n keycloak -l app=keycloak
-----
-
-Expected output:
-
-----
-NAME                        READY   STATUS    RESTARTS   AGE
-keycloak-0                  1/1     Running   0          1h
-----
-
-Access the Keycloak admin console at:
-
-{keycloak_url}
-
-=== 3.2 Create an OpenShift Client in Keycloak
-
-[source,bash,role="execute",subs="attributes"]
-----
-KEYCLOAK_POD=$(oc get pods -n keycloak -l app=keycloak -o jsonpath='{.items[0].metadata.name}')
-
-oc exec -n keycloak $KEYCLOAK_POD -- /opt/keycloak/bin/kcadm.sh config credentials \
-  --server http://localhost:8080 \
-  --realm master \
-  --user admin \
-  --password {password}
-
-oc exec -n keycloak $KEYCLOAK_POD -- /opt/keycloak/bin/kcadm.sh create clients \
-  -r master \
-  -s clientId=openshift \
-  -s enabled=true \
-  -s 'redirectUris=["https://oauth-openshift.{openshift_cluster_ingress_domain}/oauth2callback/keycloak-oidc"]' \
-  -s clientAuthenticatorType=client-secret \
-  -s secret=openshift-client-secret \
-  -s directAccessGrantsEnabled=true
-----
-
-=== 3.3 Create the OIDC Client Secret in OpenShift
-
-[source,bash,role="execute"]
-----
-oc create secret generic keycloak-oidc-secret \
-  --from-literal=clientSecret=openshift-client-secret \
-  -n openshift-config
-----
-
-=== 3.4 Add the OIDC Identity Provider to OAuth
-
-[source,bash,role="execute",subs="attributes"]
-----
-oc patch oauth cluster --type=json -p '[
-  {
-    "op": "add",
-    "path": "/spec/identityProviders/-",
-    "value": {
-      "name": "keycloak-oidc",
-      "type": "OpenID",
-      "mappingMethod": "claim",
-      "openID": {
-        "clientID": "openshift",
-        "clientSecret": {
-          "name": "keycloak-oidc-secret"
-        },
-        "issuer": "{keycloak_url}/realms/master",
-        "claims": {
-          "preferredUsername": ["preferred_username"],
-          "name": ["name"],
-          "email": ["email"]
-        }
-      }
-    }
-  }
-]'
-----
-
-=== 3.5 Wait for OAuth Rollout
-
-[source,bash,role="execute"]
-----
-oc rollout status deployment/oauth-openshift -n openshift-authentication --timeout=120s
+NAME                        USERS
+insurance-data-owners       own-bob
+insurance-data-scientists   sci-frank
+insurance-data-stewards     ste-dave
+lending-data-owners         own-alice
+lending-data-scientists     sci-eve
+lending-data-stewards       ste-carol
+ml-engineers                mle-gina
+rhods-admins                ops-admin
+rhods-users                 own-alice, own-bob, sci-eve, sci-frank, ste-carol, ste-dave, mle-gina, ops-admin
 ----
 
 === Verify
 
-Confirm both identity providers are configured:
-
 [source,bash,role="execute"]
 ----
-oc get oauth cluster -o jsonpath='{range .spec.identityProviders[*]}{.name}{"\n"}{end}'
+oc get group lending-data-owners insurance-data-owners \
+  -o custom-columns=NAME:.metadata.name,USERS:.users
 ----
 
 Expected output:
 
 ----
-freeipa-ldap
-keycloak-oidc
+NAME                  USERS
+lending-data-owners   [own-alice]
+insurance-data-owners [own-bob]
 ----
 
-Open the OpenShift console login page. You should now see both **freeipa-ldap** and **keycloak-oidc** listed as login options alongside any existing providers.
+Both data owners are in place, one per line of business. Now you can configure the platform authorization model.
 
-== Exercise 4: Create Persona-Based Groups and Configure RHOAI Auth CR
+== Exercise 2: Configure the RHOAI Auth CR
 
-With identity providers configured, you now set up the RHOAI authorization model to control who can access the RHOAI dashboard and with what level of access.
-
-=== 4.1 Verify Groups Exist
-
-Confirm the LDAP-synced groups are available:
+The RHOAI Auth CR (`services.platform.opendatahub.io`) controls which groups can access the RHOAI dashboard, and at what level. The manifest lives in the workshop's GitOps repository:
 
 [source,bash,role="execute"]
 ----
-oc get group rhods-admins rhods-users -o custom-columns=NAME:.metadata.name,USERS:.users
+cat manifests/02-idp-users-groups/rhoai-auth/auth-config.yaml
 ----
 
-Expected output:
+Review the key fields:
 
+[source,yaml]
 ----
-NAME           USERS
-rhods-admins   [ops-admin]
-rhods-users    [ds-alice ds-bob de-carol de-dave mle-eve mle-frank ops-admin]
-----
-
-=== 4.2 Configure the RHOAI Auth CR
-
-The RHOAI Auth CR (`services.platform.opendatahub.io`) controls which groups can access the RHOAI dashboard. Update it to use the groups you created:
-
-[source,bash,role="execute"]
-----
-cat <<'EOF' | oc apply -f -
 apiVersion: services.platform.opendatahub.io/v1alpha1
-kind: Auth
+kind: Auth                              # <1>
 metadata:
   name: auth-config
   namespace: redhat-ods-applications
 spec:
-  adminGroups:
+  adminGroups:                          # <2>
     - rhods-admins
-  allowedGroups:
+  allowedGroups:                        # <3>
     - rhods-users
-EOF
 ----
-
-[IMPORTANT]
-====
-The `adminGroups` list defines who can administer RHOAI settings (manage serving runtimes, cluster settings, accelerator profiles). The `allowedGroups` list defines who can access the RHOAI dashboard at all. Users not in `allowedGroups` will see an "Access denied" page.
-====
-
-=== 4.3 Create Data Science Project Namespaces Per Persona
+<1> *Auth CR* -- the RHOAI authorization object; `kind: Auth` from `services.platform.opendatahub.io`.
+<2> *Admin groups* -- can administer RHOAI settings: serving runtimes, cluster settings, accelerator profiles.
+<3> *Allowed groups* -- can access the RHOAI dashboard at all.
 
 [source,bash,role="execute"]
 ----
-for team in data-scientists data-engineers ml-engineers; do
-  oc new-project rhoai-${team}
-  oc adm policy add-role-to-group edit ${team} -n rhoai-${team}
-  oc adm policy add-role-to-group view rhods-users -n rhoai-${team}
-done
+oc apply -f manifests/02-idp-users-groups/rhoai-auth/auth-config.yaml
 ----
-
-=== 4.4 Configure Custom Workbench Roles (Optional)
 
 [NOTE]
 ====
-Custom workbench roles provide finer-grained access control within data science projects. These are defined as `ClusterRoles` and bound at the namespace level.
+Users not in `allowedGroups` will see an "Access denied" page.
 ====
 
-Create custom workbench roles for different access levels:
-
-[source,bash,role="execute"]
-----
-cat <<'EOF' | oc apply -f -
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: workbench-maintainer
-  labels:
-    opendatahub.io/dashboard: "true"
-    opendatahub.io/role-type: "workbench"
-rules:
-  - apiGroups: ["kubeflow.org"]
-    resources: ["notebooks"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["persistentvolumeclaims"]
-    verbs: ["get", "list", "watch", "create", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets", "configmaps"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: workbench-reader
-  labels:
-    opendatahub.io/dashboard: "true"
-    opendatahub.io/role-type: "workbench"
-rules:
-  - apiGroups: ["kubeflow.org"]
-    resources: ["notebooks"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["persistentvolumeclaims"]
-    verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: workbench-operator
-  labels:
-    opendatahub.io/dashboard: "true"
-    opendatahub.io/role-type: "workbench"
-rules:
-  - apiGroups: ["kubeflow.org"]
-    resources: ["notebooks"]
-    verbs: ["get", "list", "watch", "update", "patch"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["pods/exec"]
-    verbs: []
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: workbench-editor
-  labels:
-    opendatahub.io/dashboard: "true"
-    opendatahub.io/role-type: "workbench"
-rules:
-  - apiGroups: ["kubeflow.org"]
-    resources: ["notebooks"]
-    verbs: ["get", "list", "watch", "update", "patch"]
-  - apiGroups: [""]
-    resources: ["persistentvolumeclaims"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["secrets", "configmaps"]
-    verbs: ["get", "list", "watch", "update", "patch"]
-EOF
-----
+All eight personas are members of `rhods-users`, so every data owner, steward, and scientist can reach the dashboard -- what they can do once inside is decided by the RoleBindings in the next exercise.
 
 === Verify
 
@@ -589,6 +236,104 @@ Expected output:
 }
 ----
 
+With dashboard access in place, the next step is to give each line of business its own project with per-persona roles.
+
+== Exercise 3: Line-of-Business Projects and RoleBindings
+
+Create one Data Science Project per line of business and bind roles per persona:
+
+[source,bash,role="execute"]
+----
+for lob in lending insurance; do
+  oc new-project rhoai-${lob}
+  oc adm policy add-role-to-group admin ${lob}-data-owners -n rhoai-${lob}
+  oc adm policy add-role-to-group edit ${lob}-data-stewards -n rhoai-${lob}
+  oc adm policy add-role-to-group edit ${lob}-data-scientists -n rhoai-${lob}
+  oc adm policy add-role-to-group view rhods-users -n rhoai-${lob}
+done
+----
+
+[NOTE]
+====
+RoleBindings are namespace-scoped, so this is where line-of-business isolation comes from: `sci-eve` has `edit` in `rhoai-lending` but only `view` in `rhoai-insurance`. A lending scientist cannot see insurance data science work beyond a read-only glance.
+====
+
+=== Verify
+
+[source,bash,role="execute"]
+----
+oc get rolebindings -n rhoai-lending \
+  -o custom-columns=ROLE:.roleRef.name,GROUP:.subjects[0].name
+----
+
+Expected output:
+
+----
+ROLE                 GROUP
+admin                lending-data-owners
+edit                 lending-data-stewards
+edit                 lending-data-scientists
+view                 rhods-users
+----
+
+Projects and bindings are in place. Next, add the fine-grained workbench layer.
+
+== Exercise 4: Least-Privilege Workbench Roles
+
+Custom workbench roles provide finer-grained access control within data science projects. These are `ClusterRoles` labeled for the RHOAI dashboard, bound at the namespace level. The manifest lives in the GitOps repository:
+
+[source,bash,role="execute"]
+----
+cat manifests/02-idp-users-groups/rhoai-auth/workbench-roles.yaml
+----
+
+Review the key fields of the `workbench-maintainer` role -- the other three follow the same shape:
+
+[source,yaml]
+----
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: workbench-maintainer
+  labels:
+    opendatahub.io/dashboard: "true"       # <1>
+    opendatahub.io/role-type: "workbench"  # <2>
+rules:
+  - apiGroups: ["kubeflow.org"]
+    resources: ["notebooks"]               # <3>
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]  # <4>
+    verbs: ["get", "list", "watch", "create", "delete"]
+----
+<1> *Dashboard label* -- exposes the role to the RHOAI dashboard.
+<2> *Role type* -- marks this as a workbench-scoped role.
+<3> *Notebook resources* -- the `kubeflow.org` Notebook CR is the workbench; maintainers get the full lifecycle.
+<4> *Storage access* -- maintainers can create and delete the PVCs behind workbenches.
+
+[source,bash,role="execute"]
+----
+oc apply -f manifests/02-idp-users-groups/rhoai-auth/workbench-roles.yaml
+----
+
+Now bind the workbench roles per persona, in each line-of-business project:
+
+[source,bash,role="execute"]
+----
+for lob in lending insurance; do
+  oc adm policy add-role-to-group workbench-maintainer ${lob}-data-owners -n rhoai-${lob}
+  oc adm policy add-role-to-group workbench-editor ${lob}-data-stewards -n rhoai-${lob}
+  oc adm policy add-role-to-group workbench-operator ${lob}-data-scientists -n rhoai-${lob}
+done
+----
+
+[NOTE]
+====
+The persona-to-workbench-role mapping follows accountability: data owners maintain the full workbench lifecycle, data stewards edit workbench configuration, and data scientists operate workbenches (start, stop, update) without deleting them or the storage behind them.
+====
+
+=== Verify
+
 [source,bash,role="execute"]
 ----
 oc get clusterroles -l opendatahub.io/role-type=workbench -o custom-columns=NAME:.metadata.name
@@ -604,371 +349,328 @@ workbench-operator
 workbench-reader
 ----
 
-== Exercise 5: Build and Serve a Wine Quality Classifier Using Feature Store
-
-In this exercise you will use Feast (Feature Store) to prepare features, train a wine quality classification model, and deploy it for inference. This exercise demonstrates how the persona-based groups you configured interact with RHOAI data science workflows.
-
-=== 5.1 Create the Data Science Project
-
 [source,bash,role="execute"]
 ----
-oc new-project wine-classifier
-oc adm policy add-role-to-group edit data-scientists -n wine-classifier
-----
-
-=== 5.2 Deploy the Feature Store (Feast)
-
-[source,bash,role="execute"]
-----
-cat <<'EOF' | oc apply -f -
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: feast-feature-repo
-  namespace: wine-classifier
-data:
-  feature_store.yaml: |
-    project: wine_quality
-    registry: /tmp/feast-registry/registry.db
-    provider: local
-    online_store:
-      type: sqlite
-      path: /tmp/feast-online/online_store.db
-    entity_key_serialization_version: 3
-  wine_features.py: |
-    from feast import Entity, FeatureView, Field, FileSource
-    from feast.types import Float64, Int64
-    from datetime import timedelta
-
-    wine_sample = Entity(
-        name="wine_id",
-        join_keys=["wine_id"],
-    )
-
-    wine_source = FileSource(
-        path="/data/wine-quality.parquet",
-        timestamp_field="event_timestamp",
-    )
-
-    wine_features = FeatureView(
-        name="wine_features",
-        entities=[wine_sample],
-        ttl=timedelta(days=365),
-        schema=[
-            Field(name="fixed_acidity", dtype=Float64),
-            Field(name="volatile_acidity", dtype=Float64),
-            Field(name="citric_acid", dtype=Float64),
-            Field(name="residual_sugar", dtype=Float64),
-            Field(name="chlorides", dtype=Float64),
-            Field(name="free_sulfur_dioxide", dtype=Float64),
-            Field(name="total_sulfur_dioxide", dtype=Float64),
-            Field(name="density", dtype=Float64),
-            Field(name="ph", dtype=Float64),
-            Field(name="sulphates", dtype=Float64),
-            Field(name="alcohol", dtype=Float64),
-            Field(name="quality", dtype=Int64),
-        ],
-        source=wine_source,
-        online=True,
-    )
-EOF
-----
-
-=== 5.3 Create the Training Pipeline Script
-
-[source,bash,role="execute"]
-----
-cat <<'PYEOF' | oc create configmap wine-training-script -n wine-classifier --from-file=train.py=/dev/stdin
-import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report, accuracy_score
-import joblib
-import os
-
-# Load wine quality dataset
-from sklearn.datasets import load_wine
-data = load_wine()
-df = pd.DataFrame(data.data, columns=data.feature_names)
-df['target'] = data.target
-
-print(f"Dataset shape: {df.shape}")
-print(f"Classes: {np.unique(df['target'])}")
-
-# Split data
-X_train, X_test, y_train, y_test = train_test_split(
-    df[data.feature_names], df['target'],
-    test_size=0.2, random_state=42
-)
-
-# Train model
-model = RandomForestClassifier(n_estimators=100, random_state=42)
-model.fit(X_train, y_train)
-
-# Evaluate
-y_pred = model.predict(X_test)
-accuracy = accuracy_score(y_test, y_pred)
-print(f"\nAccuracy: {accuracy:.4f}")
-print(f"\nClassification Report:\n{classification_report(y_test, y_pred, target_names=data.target_names)}")
-
-# Save model
-model_dir = "/mnt/models"
-os.makedirs(model_dir, exist_ok=True)
-model_path = os.path.join(model_dir, "wine-classifier.joblib")
-joblib.dump(model, model_path)
-print(f"\nModel saved to {model_path}")
-PYEOF
-----
-
-=== 5.4 Run the Training Job
-
-[source,bash,role="execute"]
-----
-cat <<'EOF' | oc apply -f -
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: wine-training
-  namespace: wine-classifier
-spec:
-  template:
-    spec:
-      containers:
-      - name: trainer
-        image: registry.redhat.io/ubi9/python-311:latest
-        command:
-        - bash
-        - -c
-        - |
-          pip install scikit-learn joblib pandas numpy && \
-          python /scripts/train.py
-        volumeMounts:
-        - name: training-script
-          mountPath: /scripts
-        - name: model-storage
-          mountPath: /mnt/models
-      volumes:
-      - name: training-script
-        configMap:
-          name: wine-training-script
-      - name: model-storage
-        persistentVolumeClaim:
-          claimName: wine-model-pvc
-      restartPolicy: Never
-  backoffLimit: 2
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: wine-model-pvc
-  namespace: wine-classifier
-spec:
-  accessModes:
-  - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
-EOF
-----
-
-=== 5.5 Wait for Training to Complete
-
-[source,bash,role="execute"]
-----
-oc wait --for=condition=complete job/wine-training -n wine-classifier --timeout=300s
-----
-
-View the training output:
-
-[source,bash,role="execute"]
-----
-oc logs job/wine-training -n wine-classifier
-----
-
-You should see the model accuracy and classification report printed to the log.
-
-=== 5.6 Deploy the Model Using RHOAI Model Serving
-
-Create an InferenceService to serve the trained wine classifier:
-
-[source,bash,role="execute"]
-----
-cat <<'EOF' | oc apply -f -
-apiVersion: serving.kserve.io/v1beta1
-kind: InferenceService
-metadata:
-  name: wine-classifier
-  namespace: wine-classifier
-  annotations:
-    serving.kserve.io/deploymentMode: RawDeployment
-  labels:
-    opendatahub.io/dashboard: "true"
-spec:
-  predictor:
-    model:
-      modelFormat:
-        name: sklearn
-      runtime: kserve-sklearnserver
-      storageUri: pvc://wine-model-pvc/
-      resources:
-        requests:
-          cpu: 100m
-          memory: 256Mi
-        limits:
-          cpu: 500m
-          memory: 512Mi
-EOF
-----
-
-=== 5.7 Wait for the InferenceService to Become Ready
-
-[source,bash,role="execute"]
-----
-oc wait --for=condition=Ready inferenceservice/wine-classifier -n wine-classifier --timeout=300s
-----
-
-=== Verify
-
-[source,bash,role="execute"]
-----
-oc get inferenceservice wine-classifier -n wine-classifier
+oc get rolebindings -n rhoai-lending \
+  -o custom-columns=ROLE:.roleRef.name,GROUP:.subjects[0].name | grep workbench
 ----
 
 Expected output:
 
 ----
-NAME              URL                                                           READY   PREV   LATEST   AGE
-wine-classifier   https://wine-classifier-wine-classifier.apps.cluster...      True             100      2m
+ROLE                  GROUP
+workbench-maintainer  lending-data-owners
+workbench-editor      lending-data-stewards
+workbench-operator    lending-data-scientists
 ----
 
-Test the inference endpoint:
+The platform authorization model is fully configured. Now prove it -- log in as the personas and see what each one can actually do.
+
+== Exercise 5: Prove the Model -- Persona Access Walkthrough
+
+Everything so far is configuration. This exercise verifies the RBAC decisions as the personas themselves, using `oc auth can-i` impersonation -- no credential switching required:
 
 [source,bash,role="execute"]
 ----
-INFERENCE_URL=$(oc get inferenceservice wine-classifier -n wine-classifier -o jsonpath='{.status.url}')
+# The lending data scientist can create workbenches in their own LOB...
+oc auth can-i create notebooks.kubeflow.org -n rhoai-lending --as=sci-eve
 
-curl -sk "${INFERENCE_URL}/v1/models/wine-classifier:predict" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "instances": [[13.72, 1.43, 2.50, 16.7, 108, 3.40, 3.67, 0.19, 2.04, 6.8, 0.89, 2.87, 1285]]
-  }'
-----
+# ...but not in the insurance LOB -- line-of-business isolation
+oc auth can-i create notebooks.kubeflow.org -n rhoai-insurance --as=sci-eve
 
-You should see a JSON response with the predicted wine class.
+# A data scientist cannot govern the project
+oc auth can-i create rolebindings.rbac.authorization.k8s.io -n rhoai-lending --as=sci-eve
 
-== Exercise 6: Register the Wine Classifier in Model Registry
+# ...but the data owner can -- that is what ownership means
+oc auth can-i create rolebindings.rbac.authorization.k8s.io -n rhoai-lending --as=own-alice
 
-The RHOAI model registry provides a centralized catalog of trained models with versioning, metadata, and lifecycle management.
-
-=== 6.1 Verify Model Registry Is Available
-
-[source,bash,role="execute"]
-----
-oc get pods -n redhat-ods-applications -l app=model-registry
-----
-
-=== 6.2 Register the Model
-
-[source,bash,role="execute",subs="attributes"]
-----
-MODEL_REGISTRY_ROUTE={model_registry_url}
-
-# Create a registered model
-curl -sk -X POST "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "wine-quality-classifier",
-    "description": "Random Forest classifier for wine quality prediction. Trained on the UCI Wine dataset with 13 chemical property features. Achieves >95% accuracy on the test set.",
-    "customProperties": {
-      "framework": {"string_value": "scikit-learn"},
-      "task": {"string_value": "classification"},
-      "owner": {"string_value": "data-scientists"}
-    }
-  }'
-----
-
-=== 6.3 Create a Model Version
-
-[source,bash,role="execute",subs="attributes"]
-----
-# Get the registered model ID
-REGISTERED_MODEL_ID=$(curl -sk "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models?name=wine-quality-classifier" \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['items'][0]['id'])")
-
-echo "Registered Model ID: ${REGISTERED_MODEL_ID}"
-
-# Create a model version
-curl -sk -X POST "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"name\": \"v1.0.0\",
-    \"registeredModelId\": \"${REGISTERED_MODEL_ID}\",
-    \"description\": \"Initial training run. RandomForest with 100 estimators, random_state=42.\",
-    \"customProperties\": {
-      \"accuracy\": {\"string_value\": \"0.97\"},
-      \"n_estimators\": {\"int_value\": \"100\"},
-      \"training_data\": {\"string_value\": \"UCI Wine dataset\"},
-      \"serving_runtime\": {\"string_value\": \"kserve-sklearnserver\"}
-    }
-  }"
-----
-
-=== 6.4 Create a Model Artifact
-
-[source,bash,role="execute",subs="attributes"]
-----
-MODEL_VERSION_ID=$(curl -sk "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions?name=v1.0.0" \
-  | python3 -c "import sys,json; items=json.load(sys.stdin)['items']; print(items[0]['id'])")
-
-echo "Model Version ID: ${MODEL_VERSION_ID}"
-
-curl -sk -X POST "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions/${MODEL_VERSION_ID}/artifacts" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "wine-classifier-sklearn",
-    "artifactType": "model-artifact",
-    "uri": "pvc://wine-model-pvc/wine-classifier.joblib",
-    "modelFormatName": "sklearn",
-    "modelFormatVersion": "1.3",
-    "description": "Serialized RandomForest model in joblib format"
-  }'
-----
-
-=== Verify
-
-[source,bash,role="execute",subs="attributes"]
-----
-curl -sk "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models" \
-  | python3 -m json.tool
-----
-
-You should see the `wine-quality-classifier` model listed with its custom properties.
-
-[source,bash,role="execute",subs="attributes"]
-----
-curl -sk "${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions" \
-  | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-for item in data.get('items', []):
-    print(f\"Version: {item['name']}, Model ID: {item['registeredModelId']}\")
-"
+# The insurance steward cannot touch lending, and vice versa
+oc auth can-i create notebooks.kubeflow.org -n rhoai-lending --as=ste-dave
 ----
 
 Expected output:
 
 ----
-Version: v1.0.0, Model ID: 1
+yes
+no
+no
+yes
+no
 ----
 
-You can also verify the registration in the RHOAI Dashboard by navigating to **Model Registry** in the left sidebar at:
+The results in full:
+
+[cols="4,1,1,2",options="header"]
+|===
+|Decision (as user, in namespace) |Result |Role |Why
+
+|create notebooks, `rhoai-lending`, sci-eve
+|yes
+|edit + workbench-operator
+|Own line of business
+
+|create notebooks, `rhoai-insurance`, sci-eve
+|no
+|view only
+|LOB isolation
+
+|create rolebindings, `rhoai-lending`, sci-eve
+|no
+|edit
+|Scientists do not govern
+
+|create rolebindings, `rhoai-lending`, own-alice
+|yes
+|admin
+|Owners govern
+
+|create notebooks, `rhoai-lending`, ste-dave
+|no
+|view only
+|LOB isolation
+|===
+
+=== Verify in the dashboard
+
+Log in to the RHOAI dashboard as one of the personas:
 
 {rhoai_dashboard_url}
 
-== Reference: MLOps RBAC Surface Area
+. Log in as `sci-eve` (Data Scientist, Lending). The Data Science Projects list shows `rhoai-lending` as a project you can work in, and `rhoai-insurance` as read-only.
+. Try to create a workbench in `rhoai-insurance` -- the dashboard will not allow it.
+. Log out and back in as `own-alice` (Data Owner, Lending). The project settings and access control for `rhoai-lending` are now available to you.
+. Finally, log in as a user who is not in `rhods-users` -- or check the console login page shows both **freeipa-ldap** and **keycloak-oidc** providers alongside any existing ones.
 
-RHOAI RBAC spans multiple subsystems, each with its own authorization model. The following table provides a comprehensive reference for the RBAC surfaces that platform administrators must understand and configure.
+The dashboard is simply rendering the OpenShift groups and RoleBindings you configured -- which is exactly the point. Access control does not stop at namespaces, though -- the next exercise adds Models-as-a-Service to the picture.
+
+== Exercise 6: MaaS Permissions -- Performance Tiers Bound to Groups
+
+The Lending line of business has published its model: `qwen25-05b`, a modelcar served as an `LLMInferenceService` wired to the MaaS gateway. The data owner decides who gets access to the LOB's model and at what tier. In MaaS, a performance tier *is* a subscription: there is no `performanceTier` field -- the tier is a `MaaSSubscription` bound to groups, with a tier-appropriate token budget.
+
+[cols="1,2,2,1,1",options="header"]
+|===
+|Tier |Subscription |Bound groups |Token limits |Priority
+
+|Performance
+|`lending-performance-tier`
+|lending-data-owners, lending-data-stewards
+|100000 / 1m
+|1
+
+|Standard
+|`lending-standard-tier`
+|lending-data-scientists
+|10000 / 1m
+|0
+|===
+
+Both tiers attribute usage to `costCenter: lending` -- metering per line of business, so the data owner can answer for the LOB's model spend.
+
+=== 6.1 Verify the model and the MaaS stack
+
+The MaaS stack -- `maas-default-gateway`, Red Hat Connectivity Link, PostgreSQL -- is a platform-level prerequisite, and the model is deployed as pre-setup from `manifests/02-idp-users-groups/maas/` in the workshop's GitOps repository:
+
+[source,bash,role="execute"]
+----
+oc get llminferenceservice qwen25-05b-maas -n rhoai-lending
+oc get maasmodelref -n rhoai-lending
+----
+
+Expected output:
+
+----
+NAME              URL   READY   AGE
+qwen25-05b-maas         True    1h
+----
+
+----
+NAME              PHASE   AGE
+qwen25-05b-maas   Ready   1h
+----
+
+=== 6.2 Create the tier subscriptions and auth policies
+
+Three objects work together per tier. The `MaaSSubscription` binds the tier to groups and sets the token budget. The `MaaSAuthPolicy` admits exactly those groups at the gateway. The `MaaSModelRef` (already applied) publishes the model.
+
+[source,bash,role="execute"]
+----
+ls manifests/02-idp-users-groups/maas/
+----
+
+Review the performance-tier subscription:
+
+[source,yaml]
+----
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: lending-performance-tier
+  namespace: models-as-a-service        # <1>
+spec:
+  owner:
+    groups:                             # <2>
+      - name: lending-data-owners
+      - name: lending-data-stewards
+  priority: 1                           # <3>
+  tokenMetadata:
+    costCenter: lending                 # <4>
+    organizationId: lending
+  modelRefs:
+    - name: qwen25-05b-maas
+      namespace: rhoai-lending
+      tokenRateLimits:
+        - limit: 100000
+          window: 1m                    # <5>
+----
+<1> *Tenant namespace* -- must be `models-as-a-service`, the only namespace `maas-api` reads subscriptions from; anywhere else the subscription is silently ignored.
+<2> *Bound groups* -- the tier IS the subscription: these groups hold the performance tier.
+<3> *Priority* -- wins when a user holds multiple subscriptions.
+<4> *Cost center* -- usage attribution per line of business, the stewardship story.
+<5> *Token budget* -- 100 000 tokens per minute for this tier.
+
+And the auth policy that admits those groups at the gateway:
+
+[source,yaml]
+----
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSAuthPolicy
+metadata:
+  name: lending-performance-tier-auth
+  namespace: models-as-a-service
+spec:
+  subjects:
+    groups:                             # <1>
+      - name: lending-data-owners
+      - name: lending-data-stewards
+  modelRefs:                            # <2>
+    - name: qwen25-05b-maas
+      namespace: rhoai-lending
+----
+<1> *Subjects* -- must match the subscription's `owner.groups`; a key minted by a user outside these groups gets 403 at call time.
+<2> *Model refs* -- the published models this policy protects.
+
+The standard tier is identical in shape, bound to `lending-data-scientists` at 10 000 tokens per minute. Apply all four manifests:
+
+[source,bash,role="execute"]
+----
+oc apply -f manifests/02-idp-users-groups/maas/subscription-performance.yaml
+oc apply -f manifests/02-idp-users-groups/maas/subscription-standard.yaml
+oc apply -f manifests/02-idp-users-groups/maas/authpolicy-performance.yaml
+oc apply -f manifests/02-idp-users-groups/maas/authpolicy-standard.yaml
+----
+
+=== 6.3 Mint API keys as the personas
+
+API keys bind to a subscription -- the tier. Log in as the lending data scientist and mint two keys, one against each tier:
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc login -u sci-eve -p {password} {openshift_api_url}
+
+CLUSTER_DOMAIN=$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')
+export HOST="https://maas.${CLUSTER_DOMAIN}"
+
+# Against the performance tier -- sci-eve is not in its groups...
+curl -sSk -X POST "${HOST}/maas-api/v1/api-keys" \
+  -H "Authorization: Bearer $(oc whoami -t)" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"sci-eve-perf","expiresIn":"1h","subscription":"lending-performance-tier"}' \
+  | jq -r .key > /tmp/sci-eve-perf.key
+
+# ...and against the standard tier -- the tier her groups do hold
+export SCI_EVE_KEY=$(curl -sSk -X POST "${HOST}/maas-api/v1/api-keys" \
+  -H "Authorization: Bearer $(oc whoami -t)" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"sci-eve-standard","expiresIn":"1h","subscription":"lending-standard-tier"}' \
+  | jq -r .key)
+echo "Standard key: ${SCI_EVE_KEY:0:12}..."
+----
+
+Now the data owner, for the performance tier:
+
+[source,bash,role="execute",subs="attributes"]
+----
+oc login -u own-alice -p {password} {openshift_api_url}
+
+export ALICE_KEY=$(curl -sSk -X POST "${HOST}/maas-api/v1/api-keys" \
+  -H "Authorization: Bearer $(oc whoami -t)" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"own-alice-performance","expiresIn":"1h","subscription":"lending-performance-tier"}' \
+  | jq -r .key)
+
+# Return to the admin user
+oc login -u {user} -p {password} {openshift_api_url}
+echo "Owner key: ${ALICE_KEY:0:12}..."
+----
+
+=== 6.4 Prove tier-bound group enforcement
+
+Call the model with each key. Body-based routing needs the full catalog id, `publishers/rhoai-lending/models/qwen25-05b`:
+
+[source,bash,role="execute"]
+----
+MODEL_ID="publishers/rhoai-lending/models/qwen25-05b"
+
+# The data owner's performance-tier key -- admitted, her groups are in the tier
+curl -sSk "${HOST}/v1/chat/completions" \
+  -H "Authorization: Bearer ${ALICE_KEY}" \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"${MODEL_ID}\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":20}" \
+  | jq -r '.choices[0].message.content'
+
+# The data scientist's performance-tier key -- rejected: her groups are not in the tier
+curl -sSk "${HOST}/v1/chat/completions" \
+  -H "Authorization: Bearer $(cat /tmp/sci-eve-perf.key)" \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"${MODEL_ID}\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":20}" \
+  | jq -r '.error // .choices[0].message.content'
+
+# The data scientist's standard-tier key -- admitted at the lower budget
+curl -sSk "${HOST}/v1/chat/completions" \
+  -H "Authorization: Bearer ${SCI_EVE_KEY}" \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"${MODEL_ID}\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":20}" \
+  | jq -r '.choices[0].message.content'
+----
+
+Expected results:
+
+* The owner's performance-tier key returns a completion.
+* The scientist's performance-tier key returns an authorization error -- the tier's `MaaSAuthPolicy` admits only its bound groups, enforced at the gateway before the model is ever reached.
+* The scientist's standard-tier key returns a completion, at 10 000 tokens per minute instead of 100 000.
+
+[NOTE]
+====
+This is the data owner's lever in practice: grant a tier by adding a group to the subscription and its auth policy, revoke it by removing the group. The tier budget and the `costCenter` attribution make the model spend auditable per line of business.
+====
+
+=== Verify
+
+[source,bash,role="execute"]
+----
+oc get maassubscription,maasauthpolicy -n models-as-a-service
+----
+
+Expected output:
+
+----
+NAME                                                              PHASE     PRIORITY   AGE
+maassubscription.maas.opendatahub.io/lending-performance-tier     Active    1          5m
+maassubscription.maas.opendatahub.io/lending-standard-tier        Active    0          5m
+NAME                                                                  PHASE     AGE
+maasauthpolicy.maas.opendatahub.io/lending-performance-tier-auth      Active    5m
+maasauthpolicy.maas.opendatahub.io/lending-standard-tier-auth         Active    5m
+----
+
+In the RHOAI dashboard, the *API Keys* tab lists the keys with their subscriptions, and the *Usage* dashboards break token consumption down by `costCenter`:
+
+{rhoai_dashboard_url}
+
+You have now configured access control across namespaces, workbenches, and models-as-a-service -- all from the same groups. The reference below maps the complete RBAC surface.
+
+== Reference: RHOAI RBAC Surface Area
+
+RHOAI RBAC spans multiple subsystems, each with its own authorization model. This is where access control and identity come into play: every surface reads the OpenShift groups synced from your identity provider. The following table is a comprehensive reference for the RBAC surfaces a platform administrator must understand and configure.
 
 [cols="2,2,3,2",options="header"]
 |===
@@ -1004,6 +706,11 @@ RHOAI RBAC spans multiple subsystems, each with its own authorization model. The
 |Model Registry RBAC (namespace-scoped)
 |Tied to namespace `RoleBinding`; no separate auth model
 
+|*MaaS (Models-as-a-Service)*
+|MaaSSubscription, MaaSAuthPolicy, API keys
+|Performance tiers bound to groups (`owner.groups`, `subjects.groups`) + per-tier token rate limits
+|Tier subscriptions per persona group; `costCenter` for line-of-business metering
+
 |*Pipelines (Data Science Pipelines)*
 |PipelineRun, Pipeline definitions
 |OpenShift RBAC + DSP namespace access
@@ -1030,9 +737,40 @@ RHOAI RBAC spans multiple subsystems, each with its own authorization model. The
 |Typically restricted to `rhods-admins`; runtime selection available to project `edit` role
 |===
 
+=== Mapping the Personas onto the Surfaces
+
+For the data-stewardship organization modeled in this module, the personas resolve against those surfaces as follows:
+
+[cols="2,3,3",options="header"]
+|===
+|Persona |Within their line of business |Platform-wide
+
+|*Data Owner*
+|`admin` on the LOB project: governs RBAC, approves access, full workbench lifecycle (`workbench-maintainer`), serves models
+|RHOAI dashboard user; owns the project wherever it is shared
+
+|*Data Steward*
+|`edit` on the LOB project: curates data and features, edits workbench configuration (`workbench-editor`), runs pipelines
+|RHOAI dashboard user
+
+|*Data Scientist*
+|`edit` on the LOB project: builds in workbenches (`workbench-operator`), trains models, monitors runs
+|RHOAI dashboard user; other LOBs are read-only at most
+
+|*ML Engineer*
+|`edit` in serving and platform namespaces: operates serving runtimes, monitoring, pipelines
+|No RHOAI admin rights unless granted
+
+|*Platform Admin*
+|All of the above, everywhere
+|Auth CR `adminGroups`: manages serving runtimes, cluster settings, accelerator profiles
+|===
+
+The pattern to take away: *the identity provider produces the user, the directory produces the groups, RoleBindings decide the namespace, the Auth CR decides the dashboard, and the subscription tier decides the model.* Every row in the subsystem table resolves to one of those five mechanisms.
+
 [CAUTION]
 ====
-This table covers the primary RBAC surfaces as of RHOAI 3.5. Additional subsystems (guardrails, evaluation hub) are in Technology Preview and may introduce their own authorization models. Always consult the https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5[RHOAI 3.5 documentation] for the latest RBAC guidance.
+This table covers the primary RBAC surfaces as of RHOAI 3.5. Additional subsystems (guardrails, evaluation hub) are in Technology Preview and may introduce their own authorization models. Always consult the https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed/3.5[RHOAI 3.5 documentation^] for the latest RBAC guidance.
 ====
 
 [WARNING]
@@ -1044,13 +782,12 @@ The `cluster-admin` ClusterRole bypasses all RBAC checks. Avoid granting it to d
 
 In this module you:
 
-* Deployed FreeIPA in-cluster as an LDAP directory and populated it with persona-based users and groups (data scientists, data engineers, ML engineers)
-* Configured OpenShift to authenticate against FreeIPA via LDAP and synced groups into OpenShift
-* Configured Keycloak as an OIDC identity provider for federated authentication
+* Verified the FreeIPA-synced persona groups -- data owners, data stewards, and data scientists per line of business, plus platform roles
 * Configured the RHOAI Auth CR with `rhods-admins` and `rhods-users` groups to control dashboard access
-* Created custom workbench roles (Maintainer, Reader, Operator, Editor) for fine-grained notebook access control
-* Built and served a wine quality classifier using Feature Store (Feast) patterns and KServe model serving
-* Registered the trained model in the RHOAI model registry with version metadata and artifact references
-* Reviewed the full RBAC surface area across 11 RHOAI subsystems
+* Created line-of-business Data Science Projects (`rhoai-lending`, `rhoai-insurance`) with RoleBindings per persona: owners get `admin`, stewards and scientists get `edit`
+* Created custom workbench roles and bound them per persona for fine-grained notebook access control
+* Proved the model with `oc auth can-i` impersonation and dashboard walkthroughs as different personas
+* Configured MaaS performance tiers bound to groups for the Lending model, and proved tier-bound group enforcement with persona API keys
+* Reviewed the full RBAC surface area across 12 RHOAI subsystems and mapped the data-stewardship personas onto it
 
 Proceed to xref:04-module-03-models-assets-scale.adoc[Module 3: Managing Models and Assets at Scale].
