@@ -49,8 +49,8 @@ s2i-generic-data-science-notebook  image-registry.openshift-image-registry.svc:5
 code-server-notebook               image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/code-server-notebook                 2025.1,2025.2,3.4,3.5
 ----
 
-. Create the custom workbench Containerfile. Create a working directory under your home and write
-  a Containerfile that extends the minimal Jupyter image with additional packages:
+. Create the custom workbench Dockerfile. Create a working directory under your home and write
+  a Dockerfile that extends the minimal Jupyter image with additional packages:
 +
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
@@ -59,7 +59,7 @@ mkdir -p $HOME/custom-workbench-{guid}
 +
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
-cat > $HOME/custom-workbench-{guid}/Containerfile <<'EOF'
+cat > $HOME/custom-workbench-{guid}/Dockerfile <<'EOF'
 FROM image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2i-minimal-notebook:3.5
 
 USER 0
@@ -82,7 +82,12 @@ EOF
 
 . Build the image using the OpenShift Build system. Since our lab environment may not have direct
   Podman access with socket forwarding, use an OpenShift BuildConfig to build the image inside the
-  cluster:
+  cluster. `oc new-build` is not idempotent, so clear any resources from a previous run first:
++
+[source,bash,role="execute",subs="specialcharacters,attributes"]
+----
+oc delete buildconfig/custom-ml-workbench imagestream/custom-ml-workbench --ignore-not-found -n {project_name}
+----
 +
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
@@ -93,7 +98,7 @@ oc new-build --name=custom-ml-workbench \
   -n {project_name}
 ----
 +
-Start the build by uploading the Containerfile:
+Start the build by uploading the Dockerfile:
 +
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
@@ -259,12 +264,12 @@ echo '{"placeholder": "iris-rf-model"}' > $HOME/modelcar-{guid}/model/model.pkl
 The important part of this exercise is the ModelCar container packaging workflow.
 ====
 
-. Write the ModelCar Containerfile. The ModelCar Containerfile uses `scratch` as the base image
+. Write the ModelCar Dockerfile. The ModelCar Dockerfile uses `scratch` as the base image
   because it only needs to contain the model artifacts -- no runtime is required:
 +
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
-cat > $HOME/modelcar-{guid}/Containerfile <<'EOF'
+cat > $HOME/modelcar-{guid}/Dockerfile <<'EOF'
 FROM scratch
 
 COPY model/ /models/iris-classifier/
@@ -277,7 +282,13 @@ EOF
 ----
 
 . Build the ModelCar image. Build the container using an OpenShift Build (since direct Podman
-  socket access varies by environment):
+  socket access varies by environment). As in Exercise 1, clear any resources from a previous
+  run first:
++
+[source,bash,role="execute",subs="specialcharacters,attributes"]
+----
+oc delete buildconfig/iris-modelcar imagestream/iris-modelcar --ignore-not-found -n {project_name}
+----
 +
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
