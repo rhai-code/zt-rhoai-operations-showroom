@@ -588,7 +588,7 @@ Expected output: the model server is Ready and routes through the MaaS gateway, 
 NAME              URL                                                   READY   REASON   AGE
 qwen25-05b-maas   https://maas/rhoai-lending/qwen25-05b-maas               True             15m
 ----
-
++
 ----
 NAME              PHASE     ENDPOINT   HTTPROUTE                      GATEWAY                AGE
 qwen25-05b-maas   Pending              qwen25-05b-maas-kserve-route   maas-default-gateway   15m
