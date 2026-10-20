@@ -325,11 +325,14 @@ The `storageUri` uses the `oci://` protocol prefix, which tells KServe to pull m
 
 === Verify
 
-Wait for the InferenceService to become ready:
+Wait for the InferenceService to become ready. The jsonpath form is deliberate -- the
+`--for=condition=Ready` shortcut treats the conditions as stale whenever `status.observedGeneration`
+lags `metadata.generation` (which re-applying the InferenceService bumps), and hangs until the
+timeout even on a ready service:
 
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
-oc wait --for=condition=Ready inferenceservice/iris-modelcar -n {project_name} --timeout=300s
+oc wait --for='jsonpath={.status.conditions[?(@.type=="Ready")].status}=True' inferenceservice/iris-modelcar -n {project_name} --timeout=300s
 ----
 
 Check the state:
