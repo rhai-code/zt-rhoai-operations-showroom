@@ -706,10 +706,13 @@ API keys bind to a subscription -- the tier. Log in as the lending data scientis
 
 [source,bash,role="execute",subs="attributes"]
 ----
-oc login -u sci-eve -p {password} {openshift_api_url}
-
+# The cluster apps domain -- fetched as the admin user, BEFORE switching personas:
+# data scientists have no cluster-scope access to the Ingress config.
 CLUSTER_DOMAIN=$(oc get ingresses.config.openshift.io cluster -o jsonpath='{.spec.domain}')
 export HOST="https://maas.${CLUSTER_DOMAIN}"
+
+# Log in as the lending data scientist
+oc login -u sci-eve -p {password} {openshift_api_url}
 
 # Against the performance tier -- sci-eve is not in its groups...
 curl -sSk -X POST "${HOST}/maas-api/v1/api-keys" \
