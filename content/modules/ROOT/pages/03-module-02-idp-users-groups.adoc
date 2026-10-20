@@ -82,6 +82,11 @@ The provisioned personas model a data-stewardship organization:
 |Platform Admin
 |rhods-admins, rhods-users
 |Platform
+
+|dev-nia
+|Developer (non-RHOAI)
+|--
+|--
 |===
 
 == The Data Stewardship Organization Model
@@ -214,7 +219,7 @@ oc apply -f manifests/02-idp-users-groups/rhoai-auth/auth-config.yaml
 Users not in `allowedGroups` will see an "Access denied" page.
 ====
 
-All eight personas are members of `rhods-users`, so every data owner, steward, and scientist can reach the dashboard -- what they can do once inside is decided by the RoleBindings in the next exercise.
+Every data owner, steward, and scientist is a member of `rhods-users`, so they can all reach the dashboard -- what they can do once inside is decided by the RoleBindings in the next exercise. The one persona outside `rhods-users` -- `dev-nia`, the developer -- cannot reach the dashboard at all; that is the denial path you prove in Exercise 5.
 
 === Verify
 
@@ -540,7 +545,8 @@ We set all the user's to use the same password, **Password**: `{password}`
 . Log in as `sci-eve` (Data Scientist, Lending). The Data Science Projects list shows `rhoai-lending` as a project you can work in -- and `rhoai-insurance` is not listed at all.
 . There is no way to reach `rhoai-insurance` from the dashboard -- no RoleBinding, no project listing, no workbench. LOB isolation is absolute.
 . Log out and back in as `own-alice` (Data Owner, Lending). The project settings and access control for `rhoai-lending` are now available to you.
-. Finally, log in as a user who is not in `rhods-users` -- the Auth CR's `allowedGroups` gates dashboard access, so you will see an Access denied page. The console login page shows both **freeipa-ldap** (the OCP-native LDAP IdP against FreeIPA) and **rhbk** (the existing Keycloak realm) providers.
+. Finally, prove the denial path as `dev-nia` (Developer -- not in `rhods-users`). Try the **freeipa-ldap** provider first: its `memberOf` filter only admits `rhods-users` members, so the login fails outright -- the identity provider decides who can authenticate at all.
+. Now pick **rhbk** (the Keycloak realm, federated to the same FreeIPA directory with no such filter): authentication succeeds, but `dev-nia` lands in OpenShift with no groups, and the Auth CR's `allowedGroups` gates the dashboard -- the Access denied page. Two gates, one per layer.
 
 The dashboard is simply rendering the OpenShift groups and RoleBindings you configured -- which is exactly the point. Access control does not stop at namespaces, though -- the next exercise adds Models-as-a-Service to the picture.
 
