@@ -110,7 +110,7 @@ The mapping from the organization to the platform is direct:
 
 |Accountability level
 |RoleBinding in the LOB project
-|`admin` for owners, `edit` for stewards and scientists, `view` for everyone else
+|`admin` for owners, `edit` for stewards and scientists; no bindings for other LOBs
 
 |Fine-grained notebook access
 |Custom workbench roles
@@ -251,7 +251,6 @@ for lob in lending insurance; do
   oc adm policy add-role-to-group admin ${lob}-data-owners -n rhoai-${lob}
   oc adm policy add-role-to-group edit ${lob}-data-stewards -n rhoai-${lob}
   oc adm policy add-role-to-group edit ${lob}-data-scientists -n rhoai-${lob}
-  oc adm policy add-role-to-group view rhods-users -n rhoai-${lob}
 done
 ----
 
@@ -260,9 +259,14 @@ done
 The `opendatahub.io/dashboard: "true"` label is what makes a namespace show up in the RHOAI dashboard as a *Data Science Project* -- a bare `oc new-project` namespace is invisible to it. Projects created from the dashboard get the label automatically; namespaces created from the CLI do not, so label them explicitly.
 ====
 
+[CAUTION]
+====
+We deliberately do *not* bind `view` to `rhods-users` in the line-of-business projects, even though read-only access for everyone sounds right. A known RHOAI behavior lets a user with the `view` role on a project open -- and run -- workbenches from the dashboard, even though `view` is read-only at the API level. Grant visibility case by case to individual users or groups, never to the whole `rhods-users` group.
+====
+
 [NOTE]
 ====
-RoleBindings are namespace-scoped, so this is where line-of-business isolation comes from: `sci-eve` has `edit` in `rhoai-lending` but only `view` in `rhoai-insurance`. A lending scientist cannot see insurance data science work beyond a read-only glance.
+RoleBindings are namespace-scoped, so this is where line-of-business isolation comes from: `sci-eve` has `edit` in `rhoai-lending` and no role at all in `rhoai-insurance` -- the project is not even listed for her in the dashboard.
 ====
 
 === Verify
@@ -298,7 +302,6 @@ ROLE                 GROUP
 admin                lending-data-owners
 edit                 lending-data-stewards
 edit                 lending-data-scientists
-view                 rhods-users
 ----
 
 Projects and bindings are in place. Next, add the fine-grained workbench layer.
@@ -497,7 +500,7 @@ The results in full:
 
 |create notebooks, `rhoai-insurance`, sci-eve
 |no
-|view only
+|no role
 |LOB isolation
 
 |create rolebindings, `rhoai-lending`, sci-eve
@@ -512,23 +515,25 @@ The results in full:
 
 |create notebooks, `rhoai-lending`, ste-dave
 |no
-|view only
+|no role
 |LOB isolation
 
 |create notebooks, `rhoai-insurance`, ste-carol
 |no
-|view only
+|no role
 |LOB isolation
 |===
 
 === Verify in the dashboard
 
-Log in to the RHOAI dashboard as one of the personas:
+Log in to the RHOAI dashboard as one of the personas - use the `freeipa-ldap` provider.
 
 {rhoai_dashboard_url}
 
-. Log in as `sci-eve` (Data Scientist, Lending). The Data Science Projects list shows `rhoai-lending` as a project you can work in, and `rhoai-insurance` as read-only.
-. Try to create a workbench in `rhoai-insurance` -- the dashboard will not allow it.
+We set all the user's to use the same password, **Password**: `{password}`
+
+. Log in as `sci-eve` (Data Scientist, Lending). The Data Science Projects list shows `rhoai-lending` as a project you can work in -- and `rhoai-insurance` is not listed at all.
+. There is no way to reach `rhoai-insurance` from the dashboard -- no RoleBinding, no project listing, no workbench. LOB isolation is absolute.
 . Log out and back in as `own-alice` (Data Owner, Lending). The project settings and access control for `rhoai-lending` are now available to you.
 . Finally, log in as a user who is not in `rhods-users` -- the Auth CR's `allowedGroups` gates dashboard access, so you will see an Access denied page. The console login page shows both **freeipa-ldap** (the OCP-native LDAP IdP against FreeIPA) and **rhbk** (the existing Keycloak realm) providers.
 
@@ -775,7 +780,7 @@ RHOAI RBAC spans multiple subsystems, each with its own authorization model. Thi
 |*Data Science Projects*
 |Namespaces, workbenches, pipelines
 |OpenShift RBAC (`RoleBinding` in namespace)
-|`admin`, `edit`, `view` ClusterRoles
+|`admin`, `edit` ClusterRoles; avoid `view` -- the dashboard lets `view` users open workbenches (see Exercise 3)
 
 |*Workbenches (Notebooks)*
 |Notebook CR lifecycle
@@ -846,7 +851,7 @@ For the data-stewardship organization modeled in this module, the personas resol
 
 |*Data Scientist*
 |`edit` on the LOB project: builds in workbenches (`workbench-operator`), trains models, monitors runs
-|RHOAI dashboard user; other LOBs are read-only at most
+|RHOAI dashboard user; other LOBs are invisible -- no bindings
 
 |*ML Engineer*
 |`edit` in serving and platform namespaces: operates serving runtimes, monitoring, pipelines
