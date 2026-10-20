@@ -254,6 +254,7 @@ for lob in lending insurance; do
   oc new-project rhoai-${lob}
   oc label namespace rhoai-${lob} opendatahub.io/dashboard="true" --overwrite
   oc adm policy add-role-to-group admin ${lob}-data-owners -n rhoai-${lob}
+  oc adm policy add-role-to-group admin rhods-admins -n rhoai-${lob}
   oc adm policy add-role-to-group edit ${lob}-data-stewards -n rhoai-${lob}
   oc adm policy add-role-to-group edit ${lob}-data-scientists -n rhoai-${lob}
 done
@@ -305,6 +306,7 @@ Expected output:
 ----
 ROLE                 GROUP
 admin                lending-data-owners
+admin                rhods-admins
 edit                 lending-data-stewards
 edit                 lending-data-scientists
 ----
@@ -819,6 +821,30 @@ maasauthpolicy.maas.opendatahub.io/lending-performance-tier-auth      Active    
 maasauthpolicy.maas.opendatahub.io/lending-standard-tier-auth         Active    5m
 ----
 
+* The data owners, stewards, and platform admins can see the MaaS dashboards. The Observability
+  tabs (Cluster, LLM Traffic, LLM Utilization, Usage, LLM Performance) query metrics across
+  namespaces -- Limitador in `kuadrant-system`, the gateway in `openshift-ingress`, models
+  everywhere -- so they are gated by cluster-wide metrics access, not the Auth CR's
+  `adminGroups`:
++
+[source,bash,role="execute"]
+----
+oc adm policy add-cluster-role-to-group cluster-monitoring-view rhods-admins
+oc adm policy add-cluster-role-to-group cluster-monitoring-view lending-data-owners
+oc adm policy add-cluster-role-to-group cluster-monitoring-view lending-data-stewards
+oc adm policy add-cluster-role-to-group cluster-monitoring-view insurance-data-owners
+oc adm policy add-cluster-role-to-group cluster-monitoring-view insurance-data-stewards
+----
++
+[NOTE]
+====
+`cluster-monitoring-view` is cluster-wide -- there is no per-LOB metrics primitive (Limitador is
+one shared component), so owners and stewards see all users' metering data from every line of
+business. Per-tenant usage isolation would come from MaaS multi-tenancy (`AITenant`, Technology
+Preview). Data scientists keep the *Models* tab only -- least privilege: the Usage dashboard is
+the governance view, and their model performance lives under *Models*.
+====
+
 In the RHOAI dashboard, the *API Keys* tab lists the keys with their subscriptions, and the *Usage* dashboards break token consumption down by `costCenter`:
 
 {rhoai_dashboard_url}
@@ -919,7 +945,7 @@ For the data-stewardship organization modeled in this module, the personas resol
 |No RHOAI admin rights unless granted
 
 |*Platform Admin*
-|All of the above, everywhere
+|`admin` on every LOB project -- and the metrics need it too: the Observability dashboard lists projects from your namespace RBAC, not from the Auth CR's `adminGroups`
 |Auth CR `adminGroups`: manages serving runtimes, cluster settings, accelerator profiles
 |===
 
