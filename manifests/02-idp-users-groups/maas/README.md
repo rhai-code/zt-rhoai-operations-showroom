@@ -4,6 +4,11 @@ Seeds the MaaS governance for the **Lending line-of-business model**: a modelcar
 (qwen2.5-0.5b) published through MaaS with two subscription tiers bound to the
 data-stewardship groups from Module 2.
 
+NOTE: the model itself (`llminferenceservice.yaml` + `maasmodelref.yaml`) is
+GitOps-managed in the automation repository (`cluster/maas-model/`, Application
+`maas-model`) — the copies in this directory are reference only. The
+subscriptions and auth policies are applied by hand in Module 2 Exercise 6, step 2.
+
 ## Tier design
 
 | Tier        | Subscription               | Bound groups                                     | Token limits  | Priority |

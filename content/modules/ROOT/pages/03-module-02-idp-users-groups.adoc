@@ -573,9 +573,9 @@ The Lending line of business has published its model: `qwen25-05b`, a modelcar s
 
 Both tiers attribute usage to `costCenter: lending` -- metering per line of business, so the data owner can answer for the LOB's model spend.
 
-=== 6.1 Verify the model and the MaaS stack
+=== 1 Verify the model and the MaaS stack
 
-The MaaS stack -- `maas-default-gateway`, Red Hat Connectivity Link, PostgreSQL -- is a platform-level prerequisite, and the model is deployed as pre-setup from `manifests/02-idp-users-groups/maas/` in the workshop's GitOps repository:
+The MaaS stack -- `maas-default-gateway`, Red Hat Connectivity Link (Kuadrant), `maas-api`, Authorino, PostgreSQL -- is a platform-level prerequisite, deployed by the platform (`DataScienceCluster` `modelsAsAService: Managed`). The Lending model itself is pre-setup, GitOps-managed in the workshop's automation repository (`cluster/maas-model/`): the Application retries until Exercise 3 creates the `rhoai-lending` projects, then converges. The governance manifests you apply by hand stay in `manifests/02-idp-users-groups/maas/`:
 
 [source,bash,role="execute"]
 ----
@@ -586,16 +586,34 @@ oc get maasmodelref -n rhoai-lending
 Expected output:
 
 ----
-NAME              URL   READY   AGE
-qwen25-05b-maas         True    1h
+NAME              URL                                                        READY   REASON   AGE
+qwen25-05b-maas   https://maas.<cluster-domain>/rhoai-lending/qwen25-05b-maas   True             15m
 ----
 
 ----
-NAME              PHASE   AGE
-qwen25-05b-maas   Ready   1h
+NAME              PHASE     ENDPOINT   HTTPROUTE                      GATEWAY                AGE
+qwen25-05b-maas   Pending              qwen25-05b-maas-kserve-route   maas-default-gateway   15m
 ----
 
-=== 6.2 Create the tier subscriptions and auth policies
+The model server is healthy -- `RuntimeReady: True`, the HTTPRoute is accepted through the MaaS gateway -- but the `MaaSModelRef` stays `Pending` until governance pairs with it:
+
+[source,bash,role="execute"]
+----
+oc get maasmodelref qwen25-05b-maas -n rhoai-lending \
+  -o jsonpath='{range .status.conditions[*]}{.type}{"\t"}{.status}{"\t"}{.message}{"\n"}{end}'
+----
+
+Expected output:
+
+----
+RuntimeReady          True    Backend is healthy
+GovernanceAttached    False   No active subscription and auth policy pairing found
+Ready                 False   Awaiting governance pairing
+----
+
+That is expected: a model is only published through MaaS once a tier subscription and its auth policy reference it -- which is exactly what the next step creates.
+
+=== 2 Create the tier subscriptions and auth policies
 
 Three objects work together per tier. The `MaaSSubscription` binds the tier to groups and sets the token budget. The `MaaSAuthPolicy` admits exactly those groups at the gateway. The `MaaSModelRef` (already applied) publishes the model.
 
@@ -666,7 +684,23 @@ oc apply -f manifests/02-idp-users-groups/maas/authpolicy-performance.yaml
 oc apply -f manifests/02-idp-users-groups/maas/authpolicy-standard.yaml
 ----
 
-=== 6.3 Mint API keys as the personas
+=== Verify
+
+The governance objects pair with the model, and the `MaaSModelRef` flips from `Pending` to `Ready` -- the model is published:
+
+[source,bash,role="execute"]
+----
+oc get maasmodelref -n rhoai-lending
+----
+
+Expected output:
+
+----
+NAME              PHASE     ENDPOINT   HTTPROUTE                      GATEWAY                AGE
+qwen25-05b-maas   Ready                qwen25-05b-maas-kserve-route   maas-default-gateway   20m
+----
+
+=== 3 Mint API keys as the personas
 
 API keys bind to a subscription -- the tier. Log in as the lending data scientist and mint two keys, one against each tier:
 
@@ -710,7 +744,7 @@ oc login -u {user} -p {password} {openshift_api_url}
 echo "Owner key: ${ALICE_KEY:0:12}..."
 ----
 
-=== 6.4 Prove tier-bound group enforcement
+=== 4 Prove tier-bound group enforcement
 
 Call the model with each key. Body-based routing needs the full catalog id, `publishers/rhoai-lending/models/qwen25-05b`:
 
