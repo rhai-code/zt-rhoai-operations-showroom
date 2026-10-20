@@ -265,8 +265,26 @@ oc start-build iris-modelcar \
   -n {project_name}
 ----
 
+. Create the serving runtime. RHOAI 3.5 ships no classic serving runtimes (the sklearn/xgboost
+  runtimes from earlier releases are gone) -- the MLServer runtime ships as a template instead.
+  Process the template into your project to create the project-scoped `ServingRuntime`:
++
+[source,bash,role="execute",subs="specialcharacters,attributes"]
+----
+oc process -n redhat-ods-applications -o yaml mlserver-runtime-template | oc apply -n {project_name} -f -
+----
++
+[source,bash,role="execute",subs="specialcharacters,attributes"]
+----
+oc get servingruntimes -n {project_name}
+----
+
 . Deploy the ModelCar with KServe. Create an InferenceService that references the ModelCar OCI
-  image as its storage source:
+  image as its storage source. Three things are RHOAI 3.5-specific here: the runtime is the
+  `mlserver-runtime` ServingRuntime created above; the `modelClass` label tells the MLServer
+  runtime which model implementation to load; and the `MLSERVER_MODEL_URI` override points at the
+  model file inside the mounted OCI image -- the image volume keeps the image's `/models/` layout,
+  and the default injected URI is the `/mnt/models` directory, which the runtime rejects:
 +
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
@@ -278,13 +296,18 @@ metadata:
   namespace: {project_name}
   annotations:
     serving.kserve.io/deploymentMode: RawDeployment
+  labels:
+    modelClass: mlserver_sklearn.SKLearnModel
 spec:
   predictor:
     model:
       modelFormat:
         name: sklearn
-      runtime: kserve-sklearnserver
+      runtime: mlserver-runtime
       storageUri: "oci://image-registry.openshift-image-registry.svc:5000/{project_name}/iris-modelcar:1.0"
+      env:
+        - name: MLSERVER_MODEL_URI
+          value: /mnt/models/iris-classifier/model.pkl
       resources:
         requests:
           cpu: "500m"
@@ -297,29 +320,36 @@ EOF
 
 [NOTE]
 ====
-The `storageUri` uses the `oci://` protocol prefix, which tells KServe to pull model artifacts from an OCI container image rather than from S3 or PVC storage. This is the ModelCar pattern.
+The `storageUri` uses the `oci://` protocol prefix, which tells KServe to pull model artifacts from an OCI container image rather than from S3 or PVC storage. This is the ModelCar pattern -- in RHOAI 3.5 the OCI image is mounted directly into the predictor pod as a Kubernetes image volume, with no storage-initializer init container.
 ====
 
 === Verify
 
-Check that the InferenceService reaches a ready state:
+Wait for the InferenceService to become ready:
+
+[source,bash,role="execute",subs="specialcharacters,attributes"]
+----
+oc wait --for=condition=Ready inferenceservice/iris-modelcar -n {project_name} --timeout=300s
+----
+
+Check the state:
 
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc get inferenceservice iris-modelcar -n {project_name}
 ----
 
-Expected output (after 1--2 minutes):
+Expected output:
 
 [source,text]
 ----
-NAME            URL                                                     READY   PREV   LATEST   AGE
-iris-modelcar   http://iris-modelcar.rhoai-ops.svc.cluster.local        True           100      90s
+NAME            URL                                                          READY   PREV   LATEST   PREVROLLEDOUTREVISION   LATESTREADYREVISION   AGE
+iris-modelcar   http://iris-modelcar-predictor.rhoai-ops.svc.cluster.local   True                                                                  8m32s
 ----
 
 [WARNING]
 ====
-On a CPU-only cluster, the InferenceService may take longer to become ready because the sklearn serving runtime needs to initialize without GPU acceleration. If the service does not reach `READY=True` within 5 minutes, check the predictor pod logs:
+If the service does not reach `READY=True` within 5 minutes, check the predictor pod logs:
 
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
