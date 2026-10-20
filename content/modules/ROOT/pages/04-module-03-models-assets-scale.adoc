@@ -43,10 +43,10 @@ You should see output similar to:
 +
 [source,text]
 ----
-NAME                             IMAGE REPOSITORY                                                                          TAGS
-jupyter-minimal-notebook         image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/jupyter-minimal   2024.2
-jupyter-datascience-notebook     image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/jupyter-datascience   2024.2
-code-server-notebook             image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/code-server       2024.2
+NAME                               IMAGE REPOSITORY                                                                                              TAGS
+s2i-minimal-notebook               image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2i-minimal-notebook                 2025.1,2025.2,3.4,3.5
+s2i-generic-data-science-notebook  image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2i-generic-data-science-notebook    2025.1,2025.2,3.4,3.5
+code-server-notebook               image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/code-server-notebook                 2025.1,2025.2,3.4,3.5
 ----
 
 . Create the custom workbench Containerfile. Create a working directory under your home and write
@@ -60,15 +60,17 @@ mkdir -p $HOME/custom-workbench-{guid}
 [source,bash,role="execute",subs="attributes"]
 ----
 cat > $HOME/custom-workbench-{guid}/Containerfile <<'EOF'
-FROM image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/jupyter-minimal-notebook:2024.2
+FROM image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2i-minimal-notebook:3.5
 
 USER 0
 
+# mlflow-skinny version matches the MLflow server the platform deploys (3.14.0
+# on RHOAI 3.5.1) so experiment tracking is client/server compatible
 RUN pip install --no-cache-dir \
     scikit-learn==1.5.2 \
     pandas==2.2.3 \
     matplotlib==3.9.2 \
-    mlflow-skinny==2.17.2 \
+    mlflow-skinny==3.14.0 \
     boto3==1.35.0
 
 USER 1001
