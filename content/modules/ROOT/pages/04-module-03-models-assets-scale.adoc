@@ -64,14 +64,16 @@ FROM image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2
 
 USER 0
 
-# mlflow-skinny version matches the MLflow server the platform deploys (3.14.0
-# on RHOAI 3.5.1) so experiment tracking is client/server compatible
+# Package pins are versions available in the RHOAI 3.5 curated PyPI index the
+# notebook image's pip is configured to use (packages.redhat.com public-rhai
+# rhoai/3.5/cpu-ubi9); mlflow-skinny matches the MLflow server the platform
+# deploys (3.14.0 on RHOAI 3.5.1) so experiment tracking is compatible
 RUN pip install --no-cache-dir \
-    scikit-learn==1.5.2 \
+    scikit-learn==1.9.0 \
     pandas==2.2.3 \
-    matplotlib==3.9.2 \
+    matplotlib==3.11.0 \
     mlflow-skinny==3.14.0 \
-    boto3==1.35.0
+    boto3==1.43.50
 
 USER 1001
 
