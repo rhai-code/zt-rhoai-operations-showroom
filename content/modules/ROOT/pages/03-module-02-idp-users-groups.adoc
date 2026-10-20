@@ -377,6 +377,11 @@ workbench-operator
 workbench-reader
 ----
 
+[NOTE]
+====
+`workbench-reader` is defined but intentionally never bound in this module -- it is the `read-only` rung of the ladder if you ever need one. Notebooks do not currently support `read-only` access, so `workbench-reader` is not a thing. https://redhat.atlassian.net/browse/RHAIRFE-701 tracks this.
+====
+
 [source,bash,role="execute"]
 ----
 oc get rolebindings -n rhoai-lending \
