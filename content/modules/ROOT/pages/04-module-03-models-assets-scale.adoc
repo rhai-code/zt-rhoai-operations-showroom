@@ -9,7 +9,7 @@
 By the end of this module you will be able to:
 
 * Build a custom workbench image and import it into RHOAI via an ImageStream CRD
-* Build a ModelCar OCI container image using Podman and deploy it with KServe
+* Build a ModelCar OCI container image and deploy it with KServe
 * Register a model in the RHOAI model registry and inspect its metadata
 * Explain Kueue resource management concepts: ClusterQueues, LocalQueues, ResourceFlavors, and Cohorts
 * Describe MIG, dynamic MIG, and DRA GPU partitioning strategies
@@ -199,7 +199,7 @@ oc label imagestream custom-ml-workbench -n redhat-ods-applications opendatahub.
 
 '''
 
-== Exercise 2: Build a ModelCar OCI Container with Podman
+== Exercise 2: Build a ModelCar OCI Container
 
 A ModelCar is a lightweight OCI container image that packages model weights and metadata for deployment. KServe can pull model artifacts directly from an OCI registry, avoiding the need for S3 storage in some deployments.
 
