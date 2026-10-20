@@ -867,7 +867,7 @@ RHOAI RBAC spans multiple subsystems, each with its own authorization model. Thi
 |*Data Science Projects*
 |Namespaces, workbenches, pipelines
 |OpenShift RBAC (`RoleBinding` in namespace)
-|`admin`, `edit` ClusterRoles; avoid `view` -- the dashboard lets `view` users open workbenches (see Exercise 3)
+|`admin` -- deletes the project, assigns access privileges. `edit` -- manages workloads, can do neither. Avoid `view` -- the dashboard lets `view` users open workbenches (see Exercise 3)
 
 |*Workbenches (Notebooks)*
 |Notebook CR lifecycle
@@ -920,6 +920,16 @@ RHOAI RBAC spans multiple subsystems, each with its own authorization model. Thi
 |Typically restricted to `rhods-admins`; runtime selection available to project `edit` role
 |===
 
+[NOTE]
+====
+On a Data Science Project, the `admin` vs `edit` split is exactly two privileges: only `admin` can
+*delete the project* (the namespace) and *assign access privileges* (create or change RoleBindings).
+Everything else -- workbenches, models, pipelines -- `edit` can create, update, and delete, but it
+can never remove the project itself and can never change who has access. Only the data owner (or a
+platform admin) governs the project; the steward and scientist work inside it. `view` is read-only
+at the API, yet the dashboard lets `view` users open workbenches, so avoid it (see Exercise 3).
+====
+
 === Mapping the Personas onto the Surfaces
 
 For the data-stewardship organization modeled in this module, the personas resolve against those surfaces as follows:
@@ -929,7 +939,7 @@ For the data-stewardship organization modeled in this module, the personas resol
 |Persona |Within their line of business |Platform-wide
 
 |*Data Owner*
-|`admin` on the LOB project: governs RBAC, approves access, full workbench lifecycle (`workbench-maintainer`), serves models
+|`admin` on the LOB project: deletes the project, assigns access privileges (RoleBindings), full workbench lifecycle (`workbench-maintainer`), serves models
 |RHOAI dashboard user; owns the project wherever it is shared
 
 |*Data Steward*
