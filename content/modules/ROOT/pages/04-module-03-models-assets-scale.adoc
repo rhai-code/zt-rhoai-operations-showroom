@@ -203,68 +203,24 @@ oc label imagestream custom-ml-workbench -n redhat-ods-applications opendatahub.
 
 A ModelCar is a lightweight OCI container image that packages model weights and metadata for deployment. KServe can pull model artifacts directly from an OCI registry, avoiding the need for S3 storage in some deployments.
 
-. Create the model artifacts. For this exercise you will create a small scikit-learn model,
-  serialize it, and package it as a ModelCar container. Create the model training script:
-+
-[source,bash,role="execute",subs="specialcharacters,attributes"]
-----
-mkdir -p $HOME/modelcar-{guid}
-----
-+
-[source,bash,role="execute",subs="specialcharacters,attributes"]
-----
-cat > $HOME/modelcar-{guid}/train_model.py <<'PYEOF'
-import pickle
-from sklearn.datasets import load_iris
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-
-X, y = load_iris(return_X_y=True)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-model = RandomForestClassifier(n_estimators=10, random_state=42)
-model.fit(X_train, y_train)
-accuracy = model.score(X_test, y_test)
-print(f"Model accuracy: {accuracy:.4f}")
-
-with open("/tmp/model/model.pkl", "wb") as f:
-    pickle.dump(model, f)
-print("Model saved to /tmp/model/model.pkl")
-PYEOF
-----
-
-+
-Train the model and save the artifact:
+. Create the model artifacts. A ModelCar packages the serialized model artifact, not the training
+  code. In a real workflow you would train in a workbench (for example the custom image from
+  Exercise 1, which has scikit-learn) and export a pickle of the trained model. The bastion does
+  not have scikit-learn, so this exercise creates the artifact with the Python standard library --
+  KServe pulls the artifact out of the OCI image without unpickling it, so the packaging workflow
+  is what matters:
 +
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 mkdir -p $HOME/modelcar-{guid}/model
 python3 -c "
 import pickle
-from sklearn.datasets import load_iris
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
-X, y = load_iris(return_X_y=True)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-clf = RandomForestClassifier(n_estimators=10, random_state=42)
-clf.fit(X_train, y_train)
-print(f'Accuracy: {clf.score(X_test, y_test):.4f}')
+model = {'algorithm': 'RandomForestClassifier', 'n_estimators': 10, 'dataset': 'iris', 'accuracy': 0.9667}
 with open('$HOME/modelcar-{guid}/model/model.pkl', 'wb') as f:
-    pickle.dump(clf, f)
-print('Model saved.')
+    pickle.dump(model, f)
+print('Model artifact saved.')
 "
 ----
-
-[NOTE]
-====
-If `scikit-learn` is not available in the terminal environment, you can create a placeholder model file for the container build:
-
-[source,bash,role="execute",subs="specialcharacters,attributes"]
-----
-echo '{"placeholder": "iris-rf-model"}' > $HOME/modelcar-{guid}/model/model.pkl
-----
-
-The important part of this exercise is the ModelCar container packaging workflow.
-====
 
 . Write the ModelCar Dockerfile. The ModelCar Dockerfile uses `scratch` as the base image
   because it only needs to contain the model artifacts -- no runtime is required:
