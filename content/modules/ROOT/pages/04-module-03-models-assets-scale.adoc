@@ -31,17 +31,16 @@ We apply the manifests manually to the cluster in this exercise so we can see th
 
 In this exercise you will create a custom workbench image based on the RHOAI Jupyter minimal image, add Python packages for a specific workflow, and import it into the RHOAI dashboard using an ImageStream CRD.
 
-=== 1.1 Inspect the Base Workbench Images
-
-First, review the existing workbench images that ship with RHOAI:
-
+. Inspect the base workbench images. First, review the existing workbench images that ship with
+  RHOAI:
++
 [source,bash,role="execute"]
 ----
 oc get imagestreams -n redhat-ods-applications -l opendatahub.io/notebook-image=true
 ----
-
++
 You should see output similar to:
-
++
 [source,text]
 ----
 NAME                             IMAGE REPOSITORY                                                                          TAGS
@@ -50,18 +49,17 @@ jupyter-datascience-notebook     image-registry.openshift-image-registry.svc:500
 code-server-notebook             image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/code-server       2024.2
 ----
 
-=== 1.2 Create the Custom Workbench Containerfile
-
-Create a working directory and write a Containerfile that extends the minimal Jupyter image with additional packages:
-
+. Create the custom workbench Containerfile. Create a working directory under your home and write
+  a Containerfile that extends the minimal Jupyter image with additional packages:
++
 [source,bash,role="execute",subs="attributes"]
 ----
-mkdir -p /tmp/custom-workbench-{guid}
+mkdir -p $HOME/custom-workbench-{guid}
 ----
-
++
 [source,bash,role="execute",subs="attributes"]
 ----
-cat > /tmp/custom-workbench-{guid}/Containerfile <<'EOF'
+cat > $HOME/custom-workbench-{guid}/Containerfile <<'EOF'
 FROM image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/jupyter-minimal-notebook:2024.2
 
 USER 0
@@ -80,10 +78,10 @@ LABEL io.openshift.s2i.build.image="custom-ml-workbench" \
 EOF
 ----
 
-=== 1.3 Build the Image Using the OpenShift Build System
-
-Since our lab environment may not have direct Podman access with socket forwarding, use an OpenShift BuildConfig to build the image inside the cluster:
-
+. Build the image using the OpenShift Build system. Since our lab environment may not have direct
+  Podman access with socket forwarding, use an OpenShift BuildConfig to build the image inside the
+  cluster:
++
 [source,bash,role="execute",subs="attributes"]
 ----
 oc new-build --name=custom-ml-workbench \
@@ -92,26 +90,26 @@ oc new-build --name=custom-ml-workbench \
   --to='custom-ml-workbench:1.0' \
   -n {project_name}
 ----
-
++
 Start the build by uploading the Containerfile:
-
++
 [source,bash,role="execute",subs="attributes"]
 ----
 oc start-build custom-ml-workbench \
-  --from-dir=/tmp/custom-workbench-{guid} \
+  --from-dir=$HOME/custom-workbench-{guid} \
   --follow \
   -n {project_name}
 ----
-
++
 [NOTE]
 ====
 The build will take 3-5 minutes. The `--follow` flag streams the build logs so you can monitor progress. If the build times out, check the build pod logs with `oc logs -f bc/custom-ml-workbench -n {project_name}`.
 ====
 
-=== 1.4 Create the ImageStream CRD for RHOAI
-
-Create an ImageStream in the `redhat-ods-applications` namespace with the labels that tell the RHOAI dashboard to display it as an available workbench image:
-
+. Create the ImageStream CRD for RHOAI. Create an ImageStream in the `redhat-ods-applications`
+  namespace with the labels that tell the RHOAI dashboard to display it as an available workbench
+  image:
++
 [source,bash,role="execute",subs="attributes"]
 ----
 cat <<EOF | oc apply -f -
@@ -146,17 +144,17 @@ EOF
 The label `opendatahub.io/notebook-image: "true"` is what causes the RHOAI dashboard to display the image in the workbench creation form. The annotations control the display name, description, and sort order.
 ====
 
-=== 1.5 Verify the Custom Image Appears in the Dashboard
+=== Verify
 
 Confirm the ImageStream was created with the correct labels:
-
++
 [source,bash,role="execute"]
 ----
 oc get imagestream custom-ml-workbench -n redhat-ods-applications -o jsonpath='{.metadata.labels}' | python3 -m json.tool
 ----
-
++
 Expected output:
-
++
 [source,json]
 ----
 {
@@ -196,20 +194,17 @@ oc label imagestream custom-ml-workbench -n redhat-ods-applications opendatahub.
 
 A ModelCar is a lightweight OCI container image that packages model weights and metadata for deployment. KServe can pull model artifacts directly from an OCI registry, avoiding the need for S3 storage in some deployments.
 
-=== 2.1 Create the Model Artifacts
-
-For this exercise you will create a small scikit-learn model, serialize it, and package it as a ModelCar container.
-
-Create the model training script:
-
+. Create the model artifacts. For this exercise you will create a small scikit-learn model,
+  serialize it, and package it as a ModelCar container. Create the model training script:
++
 [source,bash,role="execute",subs="attributes"]
 ----
-mkdir -p /tmp/modelcar-{guid}
+mkdir -p $HOME/modelcar-{guid}
 ----
-
++
 [source,bash,role="execute",subs="attributes"]
 ----
-cat > /tmp/modelcar-{guid}/train_model.py <<'PYEOF'
+cat > $HOME/modelcar-{guid}/train_model.py <<'PYEOF'
 import pickle
 from sklearn.datasets import load_iris
 from sklearn.ensemble import RandomForestClassifier
@@ -228,11 +223,12 @@ print("Model saved to /tmp/model/model.pkl")
 PYEOF
 ----
 
++
 Train the model and save the artifact:
-
++
 [source,bash,role="execute",subs="attributes"]
 ----
-mkdir -p /tmp/modelcar-{guid}/model
+mkdir -p $HOME/modelcar-{guid}/model
 python3 -c "
 import pickle
 from sklearn.datasets import load_iris
@@ -243,7 +239,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_
 clf = RandomForestClassifier(n_estimators=10, random_state=42)
 clf.fit(X_train, y_train)
 print(f'Accuracy: {clf.score(X_test, y_test):.4f}')
-with open('/tmp/modelcar-{guid}/model/model.pkl', 'wb') as f:
+with open('$HOME/modelcar-{guid}/model/model.pkl', 'wb') as f:
     pickle.dump(clf, f)
 print('Model saved.')
 "
@@ -255,19 +251,18 @@ If `scikit-learn` is not available in the terminal environment, you can create a
 
 [source,bash,role="execute",subs="attributes"]
 ----
-echo '{"placeholder": "iris-rf-model"}' > /tmp/modelcar-{guid}/model/model.pkl
+echo '{"placeholder": "iris-rf-model"}' > $HOME/modelcar-{guid}/model/model.pkl
 ----
 
 The important part of this exercise is the ModelCar container packaging workflow.
 ====
 
-=== 2.2 Write the ModelCar Containerfile
-
-The ModelCar Containerfile uses `scratch` as the base image because it only needs to contain the model artifacts -- no runtime is required:
-
+. Write the ModelCar Containerfile. The ModelCar Containerfile uses `scratch` as the base image
+  because it only needs to contain the model artifacts -- no runtime is required:
++
 [source,bash,role="execute",subs="attributes"]
 ----
-cat > /tmp/modelcar-{guid}/Containerfile <<'EOF'
+cat > $HOME/modelcar-{guid}/Containerfile <<'EOF'
 FROM scratch
 
 COPY model/ /models/iris-classifier/
@@ -279,10 +274,9 @@ LABEL org.opencontainers.image.title="iris-classifier-modelcar" \
 EOF
 ----
 
-=== 2.3 Build the ModelCar Image
-
-Build the container using an OpenShift Build (since direct Podman socket access varies by environment):
-
+. Build the ModelCar image. Build the container using an OpenShift Build (since direct Podman
+  socket access varies by environment):
++
 [source,bash,role="execute",subs="attributes"]
 ----
 oc new-build --name=iris-modelcar \
@@ -291,19 +285,18 @@ oc new-build --name=iris-modelcar \
   --to='iris-modelcar:1.0' \
   -n {project_name}
 ----
-
++
 [source,bash,role="execute",subs="attributes"]
 ----
 oc start-build iris-modelcar \
-  --from-dir=/tmp/modelcar-{guid} \
+  --from-dir=$HOME/modelcar-{guid} \
   --follow \
   -n {project_name}
 ----
 
-=== 2.4 Deploy the ModelCar with KServe
-
-Create an InferenceService that references the ModelCar OCI image as its storage source:
-
+. Deploy the ModelCar with KServe. Create an InferenceService that references the ModelCar OCI
+  image as its storage source:
++
 [source,bash,role="execute",subs="attributes"]
 ----
 cat <<EOF | oc apply -f -
@@ -336,7 +329,7 @@ EOF
 The `storageUri` uses the `oci://` protocol prefix, which tells KServe to pull model artifacts from an OCI container image rather than from S3 or PVC storage. This is the ModelCar pattern.
 ====
 
-=== 2.5 Verify the ModelCar Deployment
+=== Verify
 
 Check that the InferenceService reaches a ready state:
 
@@ -369,43 +362,38 @@ oc logs -l serving.kserve.io/inferenceservice=iris-modelcar -n {project_name} --
 
 The RHOAI model registry provides a centralized catalog of trained models with version tracking, metadata, and lineage. In this exercise you will register the Iris classifier from Exercise 2.
 
-=== 3.1 Verify the Model Registry Is Available
-
-Check that the model registry component is enabled in your DataScienceCluster:
-
+. Verify the Model Registry is available. Check that the model registry component is enabled in
+  your DataScienceCluster:
++
 [source,bash,role="execute"]
 ----
 oc get datasciencecluster -A -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.components.modelregistry.managementState}{"\n"}{end}'
 ----
-
++
 Expected output:
-
++
 [source,text]
 ----
 default-dsc	Managed
 ----
-
++
 Confirm the model registry pods are running:
-
++
 [source,bash,role="execute"]
 ----
 oc get pods -n redhat-ods-applications -l app=model-registry
 ----
 
-=== 3.2 Get the Model Registry REST Endpoint
-
-Retrieve the model registry route:
-
+. Get the Model Registry REST endpoint. Retrieve the model registry route:
++
 [source,bash,role="execute"]
 ----
 MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
 echo "Model Registry: https://${MODEL_REGISTRY_ROUTE}"
 ----
 
-=== 3.3 Register a New Model
-
-Create a registered model entry using the REST API:
-
+. Register a new model. Create a registered model entry using the REST API:
++
 [source,bash,role="execute"]
 ----
 MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
@@ -423,10 +411,8 @@ curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered
   }'
 ----
 
-=== 3.4 Create a Model Version
-
-Add a version to the registered model:
-
+. Create a model version. Add a version to the registered model:
++
 [source,bash,role="execute"]
 ----
 MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
@@ -448,10 +434,8 @@ curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_vers
   }"
 ----
 
-=== 3.5 Create a Model Artifact
-
-Link the model artifact location to the version:
-
+. Create a model artifact. Link the model artifact location to the version:
++
 [source,bash,role="execute",subs="attributes"]
 ----
 MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
@@ -473,7 +457,7 @@ curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_arti
   }"
 ----
 
-=== 3.6 Verify Model Registration
+=== Verify
 
 List all registered models:
 
