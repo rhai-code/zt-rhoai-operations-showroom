@@ -52,12 +52,12 @@ code-server-notebook               image-registry.openshift-image-registry.svc:5
 . Create the custom workbench Containerfile. Create a working directory under your home and write
   a Containerfile that extends the minimal Jupyter image with additional packages:
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 mkdir -p $HOME/custom-workbench-{guid}
 ----
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 cat > $HOME/custom-workbench-{guid}/Containerfile <<'EOF'
 FROM image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2i-minimal-notebook:3.5
@@ -84,7 +84,7 @@ EOF
   Podman access with socket forwarding, use an OpenShift BuildConfig to build the image inside the
   cluster:
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc new-build --name=custom-ml-workbench \
   --binary=true \
@@ -95,7 +95,7 @@ oc new-build --name=custom-ml-workbench \
 +
 Start the build by uploading the Containerfile:
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc start-build custom-ml-workbench \
   --from-dir=$HOME/custom-workbench-{guid} \
@@ -112,7 +112,7 @@ The build will take 3-5 minutes. The `--follow` flag streams the build logs so y
   namespace with the labels that tell the RHOAI dashboard to display it as an available workbench
   image:
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 cat <<EOF | oc apply -f -
 apiVersion: image.openshift.io/v1
@@ -140,7 +140,7 @@ spec:
         type: Source
 EOF
 ----
-
++
 [IMPORTANT]
 ====
 The label `opendatahub.io/notebook-image: "true"` is what causes the RHOAI dashboard to display the image in the workbench creation form. The annotations control the display name, description, and sort order.
@@ -149,14 +149,14 @@ The label `opendatahub.io/notebook-image: "true"` is what causes the RHOAI dashb
 === Verify
 
 Confirm the ImageStream was created with the correct labels:
-+
+
 [source,bash,role="execute"]
 ----
 oc get imagestream custom-ml-workbench -n redhat-ods-applications -o jsonpath='{.metadata.labels}' | python3 -m json.tool
 ----
-+
+
 Expected output:
-+
+
 [source,json]
 ----
 {
@@ -199,12 +199,12 @@ A ModelCar is a lightweight OCI container image that packages model weights and 
 . Create the model artifacts. For this exercise you will create a small scikit-learn model,
   serialize it, and package it as a ModelCar container. Create the model training script:
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 mkdir -p $HOME/modelcar-{guid}
 ----
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 cat > $HOME/modelcar-{guid}/train_model.py <<'PYEOF'
 import pickle
@@ -228,7 +228,7 @@ PYEOF
 +
 Train the model and save the artifact:
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 mkdir -p $HOME/modelcar-{guid}/model
 python3 -c "
@@ -251,7 +251,7 @@ print('Model saved.')
 ====
 If `scikit-learn` is not available in the terminal environment, you can create a placeholder model file for the container build:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 echo '{"placeholder": "iris-rf-model"}' > $HOME/modelcar-{guid}/model/model.pkl
 ----
@@ -262,7 +262,7 @@ The important part of this exercise is the ModelCar container packaging workflow
 . Write the ModelCar Containerfile. The ModelCar Containerfile uses `scratch` as the base image
   because it only needs to contain the model artifacts -- no runtime is required:
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 cat > $HOME/modelcar-{guid}/Containerfile <<'EOF'
 FROM scratch
@@ -279,7 +279,7 @@ EOF
 . Build the ModelCar image. Build the container using an OpenShift Build (since direct Podman
   socket access varies by environment):
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc new-build --name=iris-modelcar \
   --binary=true \
@@ -288,7 +288,7 @@ oc new-build --name=iris-modelcar \
   -n {project_name}
 ----
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc start-build iris-modelcar \
   --from-dir=$HOME/modelcar-{guid} \
@@ -299,7 +299,7 @@ oc start-build iris-modelcar \
 . Deploy the ModelCar with KServe. Create an InferenceService that references the ModelCar OCI
   image as its storage source:
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 cat <<EOF | oc apply -f -
 apiVersion: serving.kserve.io/v1beta1
@@ -335,7 +335,7 @@ The `storageUri` uses the `oci://` protocol prefix, which tells KServe to pull m
 
 Check that the InferenceService reaches a ready state:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc get inferenceservice iris-modelcar -n {project_name}
 ----
@@ -352,7 +352,7 @@ iris-modelcar   http://iris-modelcar.rhoai-ops.svc.cluster.local        True    
 ====
 On a CPU-only cluster, the InferenceService may take longer to become ready because the sklearn serving runtime needs to initialize without GPU acceleration. If the service does not reach `READY=True` within 5 minutes, check the predictor pod logs:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc logs -l serving.kserve.io/inferenceservice=iris-modelcar -n {project_name} --tail=50
 ----
@@ -438,7 +438,7 @@ curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_vers
 
 . Create a model artifact. Link the model artifact location to the version:
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
 

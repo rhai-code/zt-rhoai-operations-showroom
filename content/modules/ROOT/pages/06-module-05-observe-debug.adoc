@@ -130,7 +130,7 @@ When models are served through KServe or ModelMesh, the serving runtimes expose 
 
 List the InferenceServices in your project namespace:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc get inferenceservice -n {project_name}
 ----
@@ -197,7 +197,7 @@ Alerting configuration is a recommended practice for production RHOAI deployment
 
 Create a PrometheusRule that fires when p99 inference latency exceeds 5 seconds for 10 minutes:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 cat <<'EOF' | oc apply -n {project_name} -f -
 apiVersion: monitoring.coreos.com/v1
@@ -236,7 +236,7 @@ EOF
 
 Confirm the PrometheusRule was created:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc get prometheusrules -n {project_name}
 ----

@@ -20,7 +20,7 @@ Log in with:
 
 Open the terminal on the right side of this page and log into OpenShift:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc login -u {user} -p {password} {openshift_api_url}
 ----
@@ -75,7 +75,7 @@ run them.
 
 Create a project for the workshop exercises:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc new-project {project_name}
 ----

@@ -205,7 +205,7 @@ Now that OADP is configured, you will create a backup of the RHOAI project names
 
 First, inventory the resources in your project:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 echo "=== Pods ==="
 oc get pods -n {project_name}
@@ -231,7 +231,7 @@ oc get notebooks -n {project_name} 2>/dev/null || echo "None"
 
 Create a Velero Backup CR that targets your project namespace:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 cat <<EOF | oc apply -f -
 apiVersion: velero.io/v1
@@ -317,7 +317,7 @@ In this exercise you will simulate a data loss scenario by deleting resources fr
 
 Before simulating data loss, record what exists:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 echo "ConfigMaps before deletion:"
 oc get configmaps -n {project_name} --no-headers | wc -l
@@ -333,7 +333,7 @@ oc get pvc -n {project_name} --no-headers | wc -l
 
 Delete a ConfigMap to simulate accidental data loss:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 # Create a test ConfigMap first to have a controlled deletion target
 oc create configmap test-rhoai-config \
@@ -366,7 +366,7 @@ In a real disaster recovery scenario, the data loss would be more extensive -- d
 
 Restore from the most recent backup:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 LATEST_BACKUP=$(oc get backups -n openshift-adp --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
 
@@ -423,7 +423,7 @@ After a restore, you must verify that the restored resources are functional, not
 
 Check that the resource counts match the pre-deletion state:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 echo "ConfigMaps after restore:"
 oc get configmaps -n {project_name} --no-headers | wc -l
@@ -436,7 +436,7 @@ oc get secrets -n {project_name} --no-headers | wc -l
 
 PVCs are often the most critical resources to verify after restore:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc get pvc -n {project_name}
 ----
@@ -447,7 +447,7 @@ All PVCs should show `Bound` status. Any PVC showing `Pending` indicates a stora
 
 If your project had InferenceServices before the backup:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc get inferenceservice -n {project_name} 2>/dev/null
 ----
@@ -458,7 +458,7 @@ Restored InferenceServices may take several minutes to become `Ready` as the ser
 
 RHOAI data connections are stored as Secrets with the label `opendatahub.io/managed=true`. Verify they survived the restore:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc get secrets -n {project_name} -l opendatahub.io/managed=true
 ----
@@ -467,7 +467,7 @@ oc get secrets -n {project_name} -l opendatahub.io/managed=true
 
 Run a comprehensive post-restore health check:
 
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 echo "=== Resource Summary ==="
 echo "ConfigMaps: $(oc get configmaps -n {project_name} --no-headers | wc -l)"

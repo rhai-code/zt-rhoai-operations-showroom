@@ -692,7 +692,7 @@ oc apply -f manifests/02-idp-users-groups/maas/authpolicy-standard.yaml
 . Mint API keys as the personas. API keys bind to a subscription -- the tier. Log in as the
   lending data scientist and mint a standard-tier key -- then try the performance tier:
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 # The cluster apps domain -- fetched as the admin user, BEFORE switching personas:
 # data scientists have no cluster-scope access to the Ingress config.
@@ -731,7 +731,7 @@ Tier enforcement starts at the key mint: a user can only mint keys for subscript
 +
 Now the data owner, for the performance tier:
 +
-[source,bash,role="execute",subs="attributes"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc login -u own-alice -p {password} {openshift_api_url}
 
