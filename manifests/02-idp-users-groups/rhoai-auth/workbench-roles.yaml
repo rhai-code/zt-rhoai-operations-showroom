@@ -1,6 +1,7 @@
 # Custom workbench roles -- finer-grained access control within data science
 # projects. ClusterRoles labeled for the RHOAI dashboard, bound at the namespace
 # level per persona in Module 2, Exercise 4.
+# WARNING: never bind `workbench-reader` to a broad group. The dashboard lets read-only roles open workbenches, so if you bind it, bind it to a narrow audience, never to a broad group.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
