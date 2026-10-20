@@ -714,21 +714,32 @@ export HOST="https://maas.${CLUSTER_DOMAIN}"
 # Log in as the lending data scientist
 oc login -u sci-eve -p {password} {openshift_api_url}
 
-# Against the performance tier -- sci-eve is not in its groups...
-curl -sSk -X POST "${HOST}/maas-api/v1/api-keys" \
-  -H "Authorization: Bearer $(oc whoami -t)" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"sci-eve-perf","expiresIn":"1h","subscription":"lending-performance-tier"}' \
-  | jq -r .key > /tmp/sci-eve-perf.key
-
-# ...and against the standard tier -- the tier her groups do hold
+# Against the standard tier -- the tier her groups do hold
 export SCI_EVE_KEY=$(curl -sSk -X POST "${HOST}/maas-api/v1/api-keys" \
   -H "Authorization: Bearer $(oc whoami -t)" \
   -H "Content-Type: application/json" \
   -d '{"name":"sci-eve-standard","expiresIn":"1h","subscription":"lending-standard-tier"}' \
-  | jq -r .key)
+  | jq -r '.key')
 echo "Standard key: ${SCI_EVE_KEY:0:12}..."
+
+# Against the performance tier -- her groups do not hold it: rejected
+curl -sSk -X POST "${HOST}/maas-api/v1/api-keys" \
+  -H "Authorization: Bearer $(oc whoami -t)" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"sci-eve-performance","expiresIn":"1h","subscription":"lending-performance-tier"}' \
+  | jq -r '.error'
 ----
+
+The performance-tier attempt is rejected at the devportal:
+
+----
+Unable to resolve a subscription for this API key
+----
+
+[NOTE]
+====
+Tier enforcement starts at the key mint: a user can only mint keys for subscriptions their groups hold. `sci-eve` never holds a performance-tier key at all.
+====
 
 Now the data owner, for the performance tier:
 
@@ -755,19 +766,12 @@ Call the model with each key. Body-based routing needs the full catalog id, `pub
 ----
 MODEL_ID="publishers/rhoai-lending/models/qwen25-05b"
 
-# The data owner's performance-tier key -- admitted, her groups are in the tier
+# The data owner's performance-tier key -- admitted at the higher budget
 curl -sSk "${HOST}/v1/chat/completions" \
   -H "Authorization: Bearer ${ALICE_KEY}" \
   -H "Content-Type: application/json" \
   -d "{\"model\":\"${MODEL_ID}\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":20}" \
   | jq -r '.choices[0].message.content'
-
-# The data scientist's performance-tier key -- rejected: her groups are not in the tier
-curl -sSk "${HOST}/v1/chat/completions" \
-  -H "Authorization: Bearer $(cat /tmp/sci-eve-perf.key)" \
-  -H "Content-Type: application/json" \
-  -d "{\"model\":\"${MODEL_ID}\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":20}" \
-  | jq -r '.error // .choices[0].message.content'
 
 # The data scientist's standard-tier key -- admitted at the lower budget
 curl -sSk "${HOST}/v1/chat/completions" \
@@ -775,13 +779,20 @@ curl -sSk "${HOST}/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d "{\"model\":\"${MODEL_ID}\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":20}" \
   | jq -r '.choices[0].message.content'
+
+# An invalid key -- rejected before the model is ever reached (empty body: judge by the status)
+curl -sSk "${HOST}/v1/chat/completions" \
+  -H "Authorization: Bearer sk-oai-invalid" \
+  -H "Content-Type: application/json" \
+  -d "{\"model\":\"${MODEL_ID}\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":20}" \
+  -o /dev/null -w "HTTP %{http_code}\n"
 ----
 
 Expected results:
 
-* The owner's performance-tier key returns a completion.
-* The scientist's performance-tier key returns an authorization error -- the tier's `MaaSAuthPolicy` admits only its bound groups, enforced at the gateway before the model is ever reached.
-* The scientist's standard-tier key returns a completion, at 10 000 tokens per minute instead of 100 000.
+* The owner's performance-tier key returns a completion, at 100 000 tokens per minute.
+* The scientist's standard-tier key returns a completion, at 10 000 tokens per minute.
+* The invalid key returns `HTTP 401` -- the gateway rejects it with an empty body, before the model is ever reached. And `sci-eve` never held a performance-tier key at all: the mint itself was rejected in the previous step.
 
 [NOTE]
 ====
