@@ -63,7 +63,7 @@ USER 0
 # Package pins are versions available in the RHOAI 3.5 curated PyPI index the
 # notebook image's pip is configured to use (packages.redhat.com public-rhai
 # rhoai/3.5/cpu-ubi9); mlflow-skinny matches the MLflow server the platform
-# deploys (3.14.0 on RHOAI 3.5.1) so experiment tracking is compatible
+# deploys (3.14.0 on RHOAI 3.5.2) so experiment tracking is compatible
 RUN pip install --no-cache-dir \
     scikit-learn==1.9.0 \
     pandas==2.2.3 \

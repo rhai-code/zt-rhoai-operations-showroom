@@ -167,8 +167,8 @@ Name: rhods-operator
 Channel: stable-3.5
 Source: redhat-operators
 Install Plan Approval: Automatic
-Current CSV: rhods-operator.3.5.1
-Installed CSV: rhods-operator.3.5.1
+Current CSV: rhods-operator.3.5.2
+Installed CSV: rhods-operator.3.5.2
 ----
 
 . Check the Installed ClusterServiceVersion. The CSV contains the full operator manifest including version, required APIs, and deployment status:
@@ -183,7 +183,7 @@ Expected output:
 [source,text]
 ----
 NAME                    PHASE       VERSION
-rhods-operator.3.5.1    Succeeded   3.5.1
+rhods-operator.3.5.2    Succeeded   3.5.2
 ----
 
 . Inspect the Install Plan. The InstallPlan records what OLM will install or has installed:
@@ -223,12 +223,12 @@ Expected output (excerpt -- the catalog also exposes the legacy 2.x `stable`/`fa
 +
 [source,text]
 ----
-eus-3.5	rhods-operator.3.5.1
+eus-3.5	rhods-operator.3.5.2
 fast	rhods-operator.2.25.8
 fast-3.x	rhods-operator.3.3.1
 stable-3.4	rhods-operator.3.4.5
-stable-3.5	rhods-operator.3.5.1
-stable-3.x	rhods-operator.3.5.1
+stable-3.5	rhods-operator.3.5.2
+stable-3.x	rhods-operator.3.5.2
 ----
 
 . Understand Channel Semantics:
@@ -241,7 +241,7 @@ stable-3.x	rhods-operator.3.5.1
 |The rolling stable channel for the 3.x line. Moves to each new minor release (e.g., 3.5 to 3.6) as it ships. **Recommended for production.**
 
 |`stable-3.N` (e.g., `stable-3.5`)
-|Pinned to a specific minor version. Receives z-stream patches (e.g., 3.5.0 to 3.5.1) but never jumps to a new minor version. **Use to control minor upgrades explicitly** -- this is what the lab cluster subscribes to.
+|Pinned to a specific minor version. Receives z-stream patches (e.g., 3.5.1 to 3.5.2) but never jumps to a new minor version. **Use to control minor upgrades explicitly** -- this is what the lab cluster subscribes to.
 
 |`eus-3.N` (e.g., `eus-3.5`)
 |Extended Update Support channels for RHOAI on EUS OpenShift releases.
@@ -279,13 +279,13 @@ CSV_NAME=$(oc get subscription -n redhat-ods-operator -o jsonpath='{.items[0].st
 oc get csv ${CSV_NAME} -n redhat-ods-operator -o jsonpath='{"Installed: "}{.metadata.name}{"\n"}{"Replaces: "}{.spec.replaces}{"\n"}{"Version: "}{.spec.version}{"\n"}'
 ----
 
-Expected output (3.5.1 replaced 3.5.0):
+Expected output (3.5.2 replaced 3.5.1):
 
 [source,text]
 ----
-Installed: rhods-operator.3.5.1
-Replaces: rhods-operator.3.5.0
-Version: 3.5.1
+Installed: rhods-operator.3.5.2
+Replaces: rhods-operator.3.5.1
+Version: 3.5.2
 ----
 
 '''
