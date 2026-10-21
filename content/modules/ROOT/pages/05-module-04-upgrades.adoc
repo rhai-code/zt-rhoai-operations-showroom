@@ -80,6 +80,18 @@ image::ocp-lifecycle-phases.png["OpenShift v4 life cycle phases -- Full Support,
 Always check the https://access.redhat.com/support/policy/updates/openshift[OpenShift Container Platform Life Cycle] page for the current support matrix. Support timelines may shift with the release cadence.
 ====
 
+=== Managing RHOAI and OpenShift Lifecycles Independently
+
+RHOAI and OpenShift are lifecycle-managed separately, within certain limits: the two products release on independent cadences, and several OpenShift minor versions support the same RHOAI release. For example, OpenShift 4.21.z and 4.22.z both support RHOAI 3.5.x -- you can upgrade OpenShift without touching the RHOAI subscription, and upgrade RHOAI without touching the OpenShift version. Always check the https://access.redhat.com/articles/rhoai-supported-configs[RHOAI Supported Configurations] matrix for the exact supported combinations.
+
+Good practice for the two lifecycles:
+
+* **Keep OpenShift z-streams updated** (4.21.z, 4.22.z): z-stream releases carry security and bug fixes, are drop-in updates within the same minor version, and should be applied regularly.
+
+* **Plan OpenShift minor upgrades carefully** (4.y to 4.y+1): minor releases may introduce breaking changes to Kubernetes APIs that platform operators -- and RHOAI components -- depend on. They need to be lifecycle-managed and validated against the RHOAI supported configurations before rolling out.
+
+* **Upgrade RHOAI on its own cadence** through the subscription channel (Exercises 1 and 2), coordinated with -- but independent of -- the OpenShift upgrade path.
+
 === Dependent Operators
 
 RHOAI depends on several other operators that must be at compatible versions:
