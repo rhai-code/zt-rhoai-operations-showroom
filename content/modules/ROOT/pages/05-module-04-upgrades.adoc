@@ -329,7 +329,7 @@ oc get csv ${CSV_NAME} -n redhat-ods-operator -o jsonpath='{.spec.customresource
 echo "(end -- empty means no enforced prerequisites)"
 ----
 
-. Inspect what is enabled and where it runs. The DSC `spec.components` is the single declarative knob for all managed components; the DSCI configures how the stack is initialized:
+. Inspect what is enabled and where it runs. The DSC `spec.components` is the single declarative knob for all managed components -- and it is a 1..1 resource: each OpenShift cluster can only have one DataScienceCluster. The DSCI configures how the stack is initialized:
 +
 [source,bash,role="execute"]
 ----
@@ -373,11 +373,17 @@ workbenches              Managed
 Note the `kueue: Removed` entry: in RHOAI 3.5 the DSC `kueue` component key rejects `managementState: Managed` -- Kueue is installed by its own OLM subscription (`kueue-operator`, channel `stable-v1.4`) instead, as done in this workshop's bootstrap. A `Removed` component is not necessarily unavailable: Kueue itself runs, just managed outside the DSC.
 ====
 +
-Check the DSCI and the operator deployment. The operator runs as a highly available deployment; the component controllers it deploys (dashboard-operator, kserve-controller-manager, data-science-pipelines-operator, ...) land in `redhat-ods-applications`:
+[NOTE]
+====
+Because the DSC is 1..1 per cluster, a single cluster cannot host differently configured Data Science Clusters. If you want to manage many differently looking Data Science Clusters, Advanced Cluster Management (ACM) with spoke clusters or hosted control planes is a good option -- each cluster runs exactly one DSC, and the fleet is managed centrally.
+====
++
+Check the DSCI and the operator deployment. The DSC says WHAT is enabled; the DSCI (DSCInitialization) is the second singleton the operator creates, and it configures HOW the platform is initialized. The operator runs as a highly available deployment; the component controllers it deploys (dashboard-operator, kserve-controller-manager, data-science-pipelines-operator, ...) land in the DSCI `applicationsNamespace`:
 +
 [source,bash,role="execute"]
 ----
 oc get dscinitialization
+oc get dscinitialization default-dsci -o jsonpath='{"Applications namespace: "}{.spec.applicationsNamespace}{"\n"}{"Monitoring namespace: "}{.spec.monitoring.namespace}{"\n"}{"Trusted CA bundle: "}{.spec.trustedCABundle.managementState}{"\n"}'
 oc get deploy -n redhat-ods-operator
 ----
 +
@@ -387,10 +393,17 @@ Expected output (ages and timestamps differ):
 ----
 NAME           AGE    PHASE   CREATED AT
 default-dsci   2d4h   Ready   2026-10-19T00:51:45Z
-
+Applications namespace: redhat-ods-applications
+Monitoring namespace: redhat-ods-monitoring
+Trusted CA bundle: Managed
 NAME             READY   UP-TO-DATE   AVAILABLE   AGE
 rhods-operator   3/3     3            3           2d4h
 ----
++
+[NOTE]
+====
+The DSC answers WHAT is enabled; the DSCI answers HOW the platform initializes. It holds the settings that must exist before and around the components: the `applicationsNamespace` (`redhat-ods-applications` -- the single namespace where the operator deploys every component controller), namespace-scoped `monitoring` for RHOAI metrics (its own `redhat-ods-monitoring` namespace with metrics storage, retention, and alerting), and a `trustedCABundle` for custom CA injection. The reason for the split: initialization must precede the components and rarely changes across upgrades, while DSC component enablement is the day-2 product configuration that differs per environment. Like the DSC, the DSCI is a singleton -- `default-dsci`.
+====
 
 . Inspect Key Dependent Operators. The OpenShift Serverless operator (Knative) is only required for the serverless KServe deployment mode -- strictly speaking it is not required for RHOAI itself. This cluster serves models in raw deployment mode, so no Knative is needed and the operator is not installed:
 +
@@ -537,6 +550,11 @@ oc patch installplan <install-plan-name> -n redhat-ods-operator \
   --type merge \
   -p '{"spec":{"approved":true}}'
 ----
++
+[NOTE]
+====
+Manual approval is a function of the OperatorGroup's namespace, not of a single operator: installing one operator with `installPlanApproval: Manual` causes ALL operators in that namespace to function with the Manual approval strategy, and OLM binds the upgrades of subscriptions sharing a namespace into a single InstallPlan. This is one of the main reasons for giving each operator (or tightly coupled group) its own namespace instead of the shared `openshift-operators` -- the approval strategy, RBAC, and upgrade lifecycle stay isolated. The lab cluster demonstrates both patterns: the RHOAI operator's subscription is alone in the dedicated `redhat-ods-operator` namespace, while the RHCL/Kuadrant dependencies (`rhcl-operator`, `authorino-operator`, `limitador-operator`, `kueue-operator`) share the global `openshift-operators` namespace -- switching any one of them to Manual changes the strategy for all of them. OLM v1 (the Operator Controller) replaces the Subscription/OperatorGroup/InstallPlan model with per-operator ClusterExtensions, each with its own upgrade policy, removing this shared-namespace entanglement.
+====
 
 . Operator Pinning: The RHCL Example. Operator pinning prevents a dependent operator from upgrading beyond a tested version. This is critical for operators like RHCL where a minor version bump could introduce breaking API changes.
 +
@@ -607,12 +625,18 @@ This section walks through the process of upgrading RHOAI from one minor version
 A minor version upgrade follows this sequence:
 
 [arabic]
+. **Read the release notes** of the version you are intending on upgrading to -- identify breaking changes, deprecated features, and new prerequisites
 . **Pre-upgrade checks** (see checklist below)
-. **Upgrade dependent operators** to RHOAI-tested versions (check release notes)
+. **Upgrade dependent operators** to RHOAI-tested versions
 . **Switch the RHOAI subscription channel** from `stable-3.4` to `stable-3.5`
 . **Approve the install plan** (if using Manual approval)
 . **Monitor the upgrade** via CSV status and pod rollouts
 . **Post-upgrade validation** of all RHOAI components
+
+[NOTE]
+====
+You can delete the operator but not the operands: uninstalling the operator (subscription + CSV) removes its controllers but leaves every operand in place -- the DataScienceCluster, DSCInitialization, workbenches, InferenceServices, model registries, and their data all survive, and reinstalling the operator re-adopts them. This is common to most operators: the operator owns the controllers, the operands are ordinary API resources. Operationally this cuts both ways during an upgrade -- a failed operator rollout does not delete user workloads, but a broken operand state also survives an operator reinstall, so it may need explicit repair.
+====
 
 === Channel Switch
 
