@@ -20,10 +20,7 @@ By the end of this module you will be able to:
 We apply the manifests manually to the cluster in this exercise so we can see the changes and learn the process. In a production environment, you would use GitOps to apply the manifests to the cluster. We do not practice what we preach as far as GitOps in this workshop.
 ====
 
-[IMPORTANT]
-====
-The exercises in this module are **walkthrough-style**. You will inspect and plan upgrade operations but will **not execute an actual upgrade** on the shared cluster. Upgrading a live shared environment would disrupt other learners. The goal is to build the skills and confidence to perform upgrades in your own environments.
-====
+The exercises in this module are **walkthrough-style**. You will inspect and plan upgrade operations but will **not execute an actual upgrade** on the cluster. The goal is to build the skills and confidence to perform upgrades in your own environments.
 
 '''
 
