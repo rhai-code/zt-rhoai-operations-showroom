@@ -111,6 +111,22 @@ RHOAI depends on several other operators that must be at compatible versions:
 |**Kueue**
 |Batch workload scheduling and GPU quota management
 |Managed by RHOAI operator
+
+|**JobSet**
+|Distributed training jobs (TrainJob) scheduled by Kueue
+|Pinned version channel (`stable-v1.0`); must match RHOAI-tested version
+
+|**Leader Worker Set (LWS)**
+|Leader-worker pod topology for llm-d disaggregated (P/D) serving
+|Pinned version channel (`stable-v1.0`); must match RHOAI-tested version
+
+|**Cluster Observability Operator (COO)**
+|MaaS observability -- dashboards (Perses) and metrics for inference services
+|Floating channel (`stable`); version-sensitive for MaaS
+
+|**OpenTelemetry Operator**
+|Metrics export pipeline for MaaS observability and metering
+|Floating channel (`stable`); version-sensitive for MaaS
 |===
 
 '''
