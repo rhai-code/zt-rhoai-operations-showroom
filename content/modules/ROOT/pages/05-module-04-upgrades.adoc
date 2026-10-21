@@ -890,7 +890,7 @@ Complete these checks before starting any RHOAI upgrade:
 |[ ]
 
 |5
-|**Back up the DataScienceCluster CR**. Export the full YAML for rollback reference.
+|**Verify the DataScienceCluster is healthy**. All enabled components reconciled and Ready before starting the upgrade.
 |[ ]
 
 |6
@@ -914,13 +914,38 @@ Complete these checks before starting any RHOAI upgrade:
 |[ ]
 |===
 
-You can export the current DataScienceCluster configuration for backup:
+Check DataScienceCluster health before an upgrade. The DSC is declared in the GitOps config repository -- what is in git is what runs on the cluster -- so the pre-upgrade task is a health check, not a manual backup:
 
 [source,bash,role="execute"]
 ----
-oc get datasciencecluster -A -o yaml > /tmp/dsc-backup-$(date +%Y%m%d).yaml
-echo "DataScienceCluster backup saved to /tmp/dsc-backup-$(date +%Y%m%d).yaml"
+echo "=== DataScienceCluster Health ==="
+oc get datasciencecluster -A
+echo ""
+
+UNHEALTHY_COUNT=$(oc get datasciencecluster default-dsc -o json | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+conds = d.get('status', {}).get('conditions', [])
+
+# A False condition is expected when the component is intentionally Removed;
+# anything else is an enabled component that is not ready
+unhealthy = [c for c in conds
+             if c.get('status') != 'True' and c.get('reason', '') != 'Removed']
+removed = sum(1 for c in conds if c.get('reason') == 'Removed')
+ready = len(conds) - removed - len(unhealthy)
+print(f'enabled components ready: {ready}/{len(conds) - removed} ({removed} removed)', file=sys.stderr)
+if unhealthy:
+    for c in unhealthy:
+        print(f"  NOT READY: {c['type']} ({c.get('reason', '')})", file=sys.stderr)
+print(len(unhealthy))
+")
+echo "Unhealthy components: ${UNHEALTHY_COUNT}"
+if [ "${UNHEALTHY_COUNT}" -gt 0 ]; then
+    echo "WARNING: Resolve unhealthy DataScienceCluster components before upgrading!"
+fi
 ----
+
+On a healthy cluster the DSC shows `READY=True` and the only `False` conditions are intentionally `Removed` components.
 
 Check cluster operator health before an upgrade:
 
