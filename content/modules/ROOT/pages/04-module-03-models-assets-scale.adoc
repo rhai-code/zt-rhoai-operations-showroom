@@ -411,9 +411,9 @@ curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered
     "name": "iris-classifier",
     "description": "Random Forest classifier trained on the Iris dataset",
     "customProperties": {
-      "framework": { "string_value": "scikit-learn" },
-      "task": { "string_value": "classification" },
-      "accuracy": { "string_value": "0.9667" }
+      "framework": { "string_value": "scikit-learn", "metadataType": "MetadataStringValue" },
+      "task": { "string_value": "classification", "metadataType": "MetadataStringValue" },
+      "accuracy": { "double_value": 0.9667, "metadataType": "MetadataDoubleValue" }
     }
   }'
 ----
@@ -436,32 +436,29 @@ curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_vers
     \"registeredModelId\": \"${MODEL_ID}\",
     \"description\": \"Initial training run - 10 estimators, accuracy 0.9667\",
     \"customProperties\": {
-      \"n_estimators\": { \"int_value\": \"10\" },
-      \"test_split\": { \"string_value\": \"0.2\" }
+      \"n_estimators\": { \"int_value\": \"10\", \"metadataType\": \"MetadataIntValue\" },
+      \"test_split\": { \"string_value\": \"0.2\", \"metadataType\": \"MetadataStringValue\" }
     }
   }"
 ----
 
-. Create a model artifact. Link the model artifact location to the version:
+. Create a model artifact. Register the model artifact location (the ModelCar OCI image) as an
+  artifact in the registry. Note the artifact is standalone in this model registry version -- the
+  `modelVersionId` linkage field is rejected by the v0.3.10 registry server:
 +
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 MODEL_REGISTRY_ROUTE=$(oc get route -n rhoai-model-registries modelregistry-https -o jsonpath='{.spec.host}')
-
-# Get the model version ID
-VERSION_ID=$(curl -sk -H "Authorization: Bearer $(oc whoami -t)" "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions?name=v1.0" | python3 -c "import sys,json; items=json.load(sys.stdin)['items']; print(items[0]['id'])")
-echo "Model Version ID: ${VERSION_ID}"
 
 curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_artifacts" \
   -H "Authorization: Bearer $(oc whoami -t)" \
   -H "Content-Type: application/json" \
   -d "{
     \"name\": \"iris-classifier-pkl\",
-    \"modelVersionId\": \"${VERSION_ID}\",
-    \"description\": \"Pickle serialized RandomForest model\",
+    \"description\": \"Pickle serialized model packaged as ModelCar\",
     \"uri\": \"oci://image-registry.openshift-image-registry.svc:5000/{project_name}/iris-modelcar:1.0\",
     \"modelFormatName\": \"sklearn\",
-    \"modelFormatVersion\": \"1.5.2\",
+    \"modelFormatVersion\": \"1.9.0\",
     \"artifactType\": \"model-artifact\"
   }"
 ----
@@ -487,7 +484,7 @@ MODEL_REGISTRY_ROUTE=$(oc get route -n rhoai-model-registries modelregistry-http
 
 MODEL_ID=$(curl -sk -H "Authorization: Bearer $(oc whoami -t)" "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models?name=iris-classifier" | python3 -c "import sys,json; print(json.load(sys.stdin)['items'][0]['id'])")
 
-curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models/${MODEL_ID}/versions" | python3 -m json.tool
+curl -sk -H "Authorization: Bearer $(oc whoami -t)" "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models/${MODEL_ID}/versions" | python3 -m json.tool
 ----
 
 '''
