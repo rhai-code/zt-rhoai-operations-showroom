@@ -981,6 +981,8 @@ fi
 OLM does **not** support automatic operator rollback. Once an operator upgrade completes, the previous CSV is removed. Rollback requires manual intervention and is not guaranteed to work.
 ====
 
+The best advice is to avoid rollback altogether and fix failed upgrades in place (fix forward). In some cases pinning the operator to the previous version and waiting for the next fixed z-stream release may be the best option.
+
 **What rollback options exist:**
 
 [cols="1,3,1"]
