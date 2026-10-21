@@ -54,15 +54,30 @@ Red Hat OpenShift AI follows a quarterly minor release cadence:
 
 === Life Cycle Support
 
-RHOAI follows the Red Hat product life cycle:
+RHOAI follows the https://access.redhat.com/support/policy/updates/openshift[Red Hat OpenShift product life cycle]: a time-delineated, phased life cycle in which at least four OpenShift minor versions are supported at any time, with releases forecast on a four-month cadence. All released errata remain accessible to active subscribers across the entire life cycle. For RHOAI itself, the current minor release and the previous one receive full support; older releases move to maintenance and then end of life.
 
-* **Full Support**: Current minor release and the previous one (e.g., 3.5 and 3.4) receive full support with bug fixes and security patches
-* **Maintenance Support**: Older releases receive critical security fixes only
-* **End of Life**: Releases beyond the maintenance window are no longer supported
+image::ocp-lifecycle-phases.png["OpenShift v4 life cycle phases -- Full Support, Maintenance Support, and Extended Update Support add-on terms across even-numbered EUS releases", width=100%]
+
+[cols="1,2,3"]
+|===
+|Phase |Duration |What you get
+
+|**Full Support**
+|Begins at GA of the minor version; ends after 6 months OR 90 days after the GA of the superseding minor release, whichever is later
+|Qualified Critical, Important, and Moderate CVEs (RHSAs) and urgent/selected high-priority bug fixes released as they become available; other fixes via periodic updates. Customers are expected to run the latest z-stream (4.x.z) to receive fixes.
+
+|**Maintenance Support**
+|After Full Support; ends 18 months after GA
+|Security fixes only (qualified RHSA CVEs) plus urgent/selected bug fixes at Red Hat's discretion. After the phase ends, software and documentation remain available but no technical support is provided except assistance to upgrade to a supported version.
+
+|**Extended Update Support (EUS) Add-Ons**
+|Optional add-on terms for even-numbered minor releases (for example, 4.14, 4.16)
+|Term 1 (6 months) plus Terms 2 and 3 (12 months each) extend the same release for up to 36--48 months, with technical support and backports of security and urgent bug fixes for platform-aligned operators. Included with Premium subscriptions; optional add-on for Standard.
+|===
 
 [NOTE]
 ====
-Always check the https://access.redhat.com/support/policy/updates/rhoai/lifecycle[RHOAI Life Cycle Policy] page for the current support matrix. Support timelines may shift with the quarterly cadence.
+Always check the https://access.redhat.com/support/policy/updates/openshift[OpenShift Container Platform Life Cycle] page for the current support matrix. Support timelines may shift with the release cadence.
 ====
 
 === Dependent Operators
