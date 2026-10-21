@@ -381,18 +381,20 @@ Expected output:
 default-dsc	Managed
 ----
 +
-Confirm the model registry pods are running:
+Confirm the model registry instance is deployed (the model registry service + its Postgres
+database run in the `rhoai-model-registries` namespace; the operator and UI pods run in
+`redhat-ods-applications`):
 +
 [source,bash,role="execute"]
 ----
-oc get pods -n redhat-ods-applications -l app=model-registry
+oc get pods -n rhoai-model-registries
 ----
 
 . Get the Model Registry REST endpoint. Retrieve the model registry route:
 +
 [source,bash,role="execute"]
 ----
-MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
+MODEL_REGISTRY_ROUTE=$(oc get route -n rhoai-model-registries modelregistry-https -o jsonpath='{.spec.host}')
 echo "Model Registry: https://${MODEL_REGISTRY_ROUTE}"
 ----
 
@@ -400,9 +402,10 @@ echo "Model Registry: https://${MODEL_REGISTRY_ROUTE}"
 +
 [source,bash,role="execute"]
 ----
-MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
+MODEL_REGISTRY_ROUTE=$(oc get route -n rhoai-model-registries modelregistry-https -o jsonpath='{.spec.host}')
 
 curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models" \
+  -H "Authorization: Bearer $(oc whoami -t)" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "iris-classifier",
@@ -419,13 +422,14 @@ curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered
 +
 [source,bash,role="execute"]
 ----
-MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
+MODEL_REGISTRY_ROUTE=$(oc get route -n rhoai-model-registries modelregistry-https -o jsonpath='{.spec.host}')
 
 # Get the registered model ID
-MODEL_ID=$(curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models?name=iris-classifier" | python3 -c "import sys,json; print(json.load(sys.stdin)['items'][0]['id'])")
+MODEL_ID=$(curl -sk -H "Authorization: Bearer $(oc whoami -t)" "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models?name=iris-classifier" | python3 -c "import sys,json; print(json.load(sys.stdin)['items'][0]['id'])")
 echo "Registered Model ID: ${MODEL_ID}"
 
 curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions" \
+  -H "Authorization: Bearer $(oc whoami -t)" \
   -H "Content-Type: application/json" \
   -d "{
     \"name\": \"v1.0\",
@@ -442,13 +446,14 @@ curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_vers
 +
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
-MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
+MODEL_REGISTRY_ROUTE=$(oc get route -n rhoai-model-registries modelregistry-https -o jsonpath='{.spec.host}')
 
 # Get the model version ID
-VERSION_ID=$(curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions?name=v1.0" | python3 -c "import sys,json; items=json.load(sys.stdin)['items']; print(items[0]['id'])")
+VERSION_ID=$(curl -sk -H "Authorization: Bearer $(oc whoami -t)" "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_versions?name=v1.0" | python3 -c "import sys,json; items=json.load(sys.stdin)['items']; print(items[0]['id'])")
 echo "Model Version ID: ${VERSION_ID}"
 
 curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/model_artifacts" \
+  -H "Authorization: Bearer $(oc whoami -t)" \
   -H "Content-Type: application/json" \
   -d "{
     \"name\": \"iris-classifier-pkl\",
@@ -467,9 +472,9 @@ List all registered models:
 
 [source,bash,role="execute"]
 ----
-MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
+MODEL_REGISTRY_ROUTE=$(oc get route -n rhoai-model-registries modelregistry-https -o jsonpath='{.spec.host}')
 
-curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models" | python3 -m json.tool
+curl -sk -H "Authorization: Bearer $(oc whoami -t)" "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models" | python3 -m json.tool
 ----
 
 You should see your `iris-classifier` model with its metadata and custom properties.
@@ -478,9 +483,9 @@ List versions for the model:
 
 [source,bash,role="execute"]
 ----
-MODEL_REGISTRY_ROUTE=$(oc get route -n redhat-ods-applications -l app=model-registry -o jsonpath='{.items[0].spec.host}')
+MODEL_REGISTRY_ROUTE=$(oc get route -n rhoai-model-registries modelregistry-https -o jsonpath='{.spec.host}')
 
-MODEL_ID=$(curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models?name=iris-classifier" | python3 -c "import sys,json; print(json.load(sys.stdin)['items'][0]['id'])")
+MODEL_ID=$(curl -sk -H "Authorization: Bearer $(oc whoami -t)" "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models?name=iris-classifier" | python3 -c "import sys,json; print(json.load(sys.stdin)['items'][0]['id'])")
 
 curl -sk "https://${MODEL_REGISTRY_ROUTE}/api/model_registry/v1alpha3/registered_models/${MODEL_ID}/versions" | python3 -m json.tool
 ----
