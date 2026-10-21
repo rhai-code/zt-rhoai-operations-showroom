@@ -13,7 +13,7 @@ By the end of this module you will be able to:
 * Register a model in the RHOAI model registry and inspect its metadata
 * Explain Kueue resource management concepts: ClusterQueues, LocalQueues, ResourceFlavors, and Cohorts
 * Describe MIG, dynamic MIG, and DRA GPU partitioning strategies
-* Describe llm-d serving topologies including single-node, multi-node data parallelism, prefill/decode disaggregation, and WideEP
+* Describe llm-d serving topologies including single-node, multi-node data parallelism, prefill/decode disaggregation, and WideEP, plus the EPP scheduler, distributed KV cache, and WVA autoscaling
 * Inspect and describe hardware profiles with node selectors, taints, and tolerations
 
 [IMPORTANT]
@@ -777,7 +777,18 @@ DRA support in RHOAI is under active development. Check the https://docs.redhat.
 
 == Conceptual Section: llm-d Serving Topologies and the EPP Scheduler
 
-llm-d (formerly vLLM-d) is the distributed LLM serving stack integrated into RHOAI for large-scale model deployments. Understanding its deployment topologies is critical for operations planning.
+[NOTE]
+====
+This section is conceptual. The lab cluster does not have GPUs, so you will understand the llm-d serving stack -- not deploy it. It summarizes the serving topologies, the EPP scheduler, and the autoscaling approaches that matter for operations planning of large-scale model deployments.
+====
+
+=== What Is llm-d?
+
+llm-d is the distributed LLM serving stack integrated into RHOAI for large-scale model deployments. It extends the https://gateway-api-inference-extension.sigs.k8s.io/[Gateway API Inference Extension^] with deeper vLLM runtime integration -- distributed and shared KV cache and disaggregated prefill -- and is one of the most advanced solutions currently available for large-scale LLM deployments.
+
+The disaggregated serving approach combines three ingredients: an LLM-aware router, a distributed KV cache, and disaggregated prefill optimizations. Such a configuration makes the deployment more similar to an appliance than a traditional Kubernetes deployment -- it is designed for very large-scale deployments where few models are served in a single cluster.
+
+llm-d is not the only project in this space: the most famous alternative is NVIDIA Dynamo, and the main difference is focus. NVIDIA Dynamo is specialized and deeply integrated with NVIDIA hardware, while llm-d aims to support different hardware and integrate existing open source projects, leveraging the ecosystem.
 
 === Deployment Topologies
 
@@ -801,8 +812,10 @@ Multiple replicas of the full model run independently across nodes. A load balan
 
 Separates the two phases of LLM inference into specialized worker pools:
 
-* **Prefill workers**: Process the input prompt (compute-intensive, high memory bandwidth)
-* **Decode workers**: Generate output tokens one at a time (latency-sensitive, lower compute)
+* **Prefill workers**: Process the input prompt and produce the first token (compute-bound -- this phase impacts Time to First Token, TTFT)
+* **Decode workers**: Generate output tokens one at a time (memory-bound -- this phase impacts Inter-Token Latency, ITL)
+
+Given the different nature of the two workloads, disaggregated prefill lets you scale and tune each phase independently -- for example, a workload with long input prompts needs more prefill replicas. The main challenge is that prefill initializes the KV cache, so it must be transferred from the prefill instance to the decode instance to continue generation -- which requires the distributed KV cache and a routing component (see below). This topology was introduced by the Mooncake project and later adopted by NVIDIA Dynamo and llm-d.
 
 This topology enables:
 
@@ -820,12 +833,72 @@ For Mixture-of-Experts (MoE) models like Mixtral, WideEP distributes expert laye
 
 === Endpoint Picker Pod (EPP)
 
-The EPP is the intelligent request router in llm-d deployments:
+Intelligent routing in llm-d deployments builds on the Gateway API Inference Extension. Envoy proxy is the core component: its https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/ext_proc_filter[External Processing (ext_proc)^] filter defines a gRPC protocol that external services implement to read and modify both HTTP headers and the request body during processing.
+
+The Gateway API Inference Extension adopts this concept to define the **Endpoint Picker protocol (EPP)**. An Endpoint Picker picks an endpoint from the https://gateway-api-inference-extension.sigs.k8s.io/concepts/api_types/[InferencePool^], and every implementation must support the Envoy External Processing protocol so the Envoy proxy can invoke it during request processing.
+
+The EPP is the intelligent request router:
 
 * **KV-cache-aware routing**: Directs requests to the replica most likely to have relevant KV cache entries, reducing redundant computation
 * **Load-aware scheduling**: Considers GPU memory utilization, queue depth, and active request count
 * **Session affinity**: Multi-turn conversations route to the same replica for cache reuse
 * **Health monitoring**: Removes unhealthy replicas from the routing pool
+
+One of the most interesting implementations is llm-d's **inference-scheduler**. It supports different filters and scoring logic -- for example, it can scrape metrics from the vLLM instances and use the `vllm:num_requests_waiting` metric to pick the replica with the lowest number of waiting requests.
+
+From a Kubernetes perspective, each Endpoint Picker is a separate deployment, usually in the same namespace as the model (not required). The requirements: access to the vLLM container to collect metrics, and gateway (Envoy) reachability to the Endpoint Picker. Communication can be secured via mTLS.
+
+=== KServe LLMInferenceService
+
+The configuration of InferencePools, InferenceModels, and Endpoint Pickers becomes complex for production deployments. KServe's `LLMInferenceService` API simplifies this with a higher-level abstraction that automatically manages the underlying gateway components. `LLMInferenceServiceConfig` acts as a preset template encapsulating common configuration patterns -- intelligent routing, KV-cache-aware scheduling, and disaggregated serving -- hiding the low-level complexity while still allowing customization when needed.
+
+[cols="1,1,1"]
+|===
+|Aspect |InferenceService + ServingRuntime |LLMInferenceService + LLMInferenceServiceConfig
+
+|Primary use case
+|Predictive AI (classification, regression)
+|Generative AI (LLMs, text generation)
+
+|Deployment patterns
+|Single-node, simple scaling
+|Multinode distributed inference, disaggregated serving
+
+|Configuration template
+|ServingRuntime defines a model server template
+|LLMInferenceServiceConfig defines base LLM config with inheritance
+
+|Routing and scheduling
+|Basic load balancing
+|Advanced routing with gateway, scheduler, and KV-cache-aware scheduling
+|===
+
+=== Distributed KV Cache
+
+The KV cache is a critical aspect of efficient LLM execution. The intuition behind the **distributed KV cache**: store KV blocks in an external cache and reuse them when necessary. Two main benefits:
+
+* The KV cache instance size is no longer limited by the available memory
+* Blocks can be shared across different replicas
+
+The optimization only pays off if the time to transfer KV cache data from one instance to another is very fast -- in the range of milliseconds. Two projects were created specifically for this focus: **LMCache** ("Redis for LLMs" -- an API to cache KV blocks; the main benefit applies to scenarios with very long input prompts, as in RAG, so prefill does not need to be performed for every new request) and **NVIDIA Inference Xfer Library (NIXL)** -- a small library accelerating point-to-point communication for AI runtimes, providing an abstraction over different types of memory (GPU and CPU) and storage. NIXL is flexible enough to be used even without disaggregated serving -- for example, leveraging CPU memory as an extension of GPU memory for a larger KV cache.
+
+The distribution of the KV cache affects the router too: even when the cache is accessible by all replicas, it is more efficient to forward a request to a replica where the necessary KV cache blocks are already ready -- avoiding a cache miss and a block transfer.
+
+=== Network Requirements
+
+Everything described so far is applicable to a traditional Kubernetes cluster that has at least one node with GPUs -- but that is not enough to support disaggregated serving. As soon as the runtime is distributed, and in particular the KV cache is shared across different deployments, the network bandwidth available to share the KV cache blocks becomes critical and a **dedicated network configuration is required**.
+
+The traditional pod network interface is usually backed by an Ethernet connection with up to 10--20 Gbps, while the bandwidth requirement is about one order of magnitude higher -- around 500--600 Gbps:
+
+* **NVLink / NVSwitch** (NVIDIA): multiple GPUs connected to break the Tbps limit in some configurations
+* **RDMA / RoCE** (RDMA over Converged Ethernet): up to 800 Gbps, not specific to NVIDIA hardware
+* **InfiniBand**: the classic HPC RDMA implementation, now becoming more widely adopted with the evolution of generative AI workloads
+
+=== Workload Variant Autoscaler (WVA)
+
+llm-d's **Workload Variant Autoscaler (WVA)** is designed specifically for LLM workloads. Instead of just monitoring CPU or request counts, WVA looks at what each pod can handle, considers that different requests require different amounts of work (some generate many tokens, others just a few), and scales based on your actual latency targets. This lets the cluster run at higher utilization before adding pods, while still meeting performance goals.
+
+Disaggregated prefill autoscaling differs significantly from traditional Kubernetes autoscaler definitions: it functions more like a *runtime controller* that observes system status and automatically rebalances replica roles or adjusts replica counts for each role (prefill vs decode).
 
 === Batch Inference
 
@@ -853,9 +926,17 @@ llm-d supports batch inference for processing large datasets:
 |**HPA with custom metrics**
 |Scales based on GPU utilization, queue depth, or KV cache pressure via Prometheus metrics
 
+|**WVA (Workload Variant Autoscaler)**
+|llm-d's autoscaler: scales on actual latency targets, considering the work each request requires
+
 |**Scale-to-zero**
 |Supported with Knative Serving; cold start adds latency for first request
 |===
+
+[NOTE]
+====
+For a deeper treatment of everything in this section, see *Generative AI on Kubernetes* (Roland Huss & Daniele Zonca), Chapter 4 -- "LLM-Aware Routing", "Disaggregated Serving", and "Autoscaling".
+====
 
 '''
 
