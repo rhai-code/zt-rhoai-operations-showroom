@@ -681,6 +681,55 @@ for s in sorted(subs, key=lambda x: x['metadata']['name']):
 "
 ----
 
+Expected output (subscriptions on this cluster -- your names, channels, and count will differ):
+
+[source,text]
+----
+  [FLOATING] [AUTO  ] authorino-operator-stable-redhat-operators-openshift-marketplace channel=stable ** HIGH RISK **
+  [PINNED  ] [AUTO  ] cephcsi-operator-stable-4.21-redhat-operators-openshift-marketplace channel=stable-4.21
+  [FLOATING] [AUTO  ] cluster-observability-operator           channel=stable ** HIGH RISK **
+  [FLOATING] [AUTO  ] dns-operator-stable-redhat-operators-openshift-marketplace channel=stable ** HIGH RISK **
+  [PINNED  ] [AUTO  ] job-set                                  channel=stable-v1.0
+  [PINNED  ] [AUTO  ] kueue-operator                           channel=stable-v1.4
+  [PINNED  ] [AUTO  ] leader-worker-set                        channel=stable-v1.0
+  [FLOATING] [AUTO  ] limitador-operator-stable-redhat-operators-openshift-marketplace channel=stable ** HIGH RISK **
+  [PINNED  ] [AUTO  ] mcg-operator-stable-4.21-redhat-operators-openshift-marketplace channel=stable-4.21
+  [PINNED  ] [AUTO  ] ocs-client-operator-stable-4.21-redhat-operators-openshift-marketplace channel=stable-4.21
+  [PINNED  ] [AUTO  ] ocs-operator-stable-4.21-redhat-operators-openshift-marketplace channel=stable-4.21
+  [PINNED  ] [AUTO  ] odf-csi-addons-operator-stable-4.21-redhat-operators-openshift-marketplace channel=stable-4.21
+  [PINNED  ] [AUTO  ] odf-dependencies                         channel=stable-4.21
+  [PINNED  ] [AUTO  ] odf-external-snapshotter-operator-stable-4.21-redhat-operators-openshift-marketplace channel=stable-4.21
+  [PINNED  ] [AUTO  ] odf-operator                             channel=stable-4.21
+  [PINNED  ] [AUTO  ] odf-prometheus-operator-stable-4.21-redhat-operators-openshift-marketplace channel=stable-4.21
+  [FLOATING] [AUTO  ] openshift-cert-manager-operator          channel=stable-v1 ** HIGH RISK **
+  [PINNED  ] [AUTO  ] openshift-gitops-operator                channel=gitops-1.21
+  [FLOATING] [AUTO  ] opentelemetry-product                    channel=stable ** HIGH RISK **
+  [PINNED  ] [AUTO  ] quay-operator                            channel=stable-3.17
+  [PINNED  ] [AUTO  ] recipe-stable-4.21-redhat-operators-openshift-marketplace channel=stable-4.21
+  [PINNED  ] [AUTO  ] rhbk-operator                            channel=stable-v26.6
+  [FLOATING] [AUTO  ] rhcl-operator                            channel=stable ** HIGH RISK **
+  [PINNED  ] [AUTO  ] rhods-operator                           channel=stable-3.5
+  [PINNED  ] [AUTO  ] rook-ceph-operator-stable-4.21-redhat-operators-openshift-marketplace channel=stable-4.21
+----
+
+The script classifies each subscription along two dimensions -- whether the channel name contains a version number (pinned) and the install plan approval strategy -- and marks the risk:
+
+[cols="1,3"]
+|===
+|Category |Meaning
+
+|**FLOATING + Automatic** -- `HIGH RISK`
+|The channel has no version pin and approval is Automatic: OLM pulls in any new release from the channel and installs it without human intervention. An auto-upgraded operator may break compatibility with the current RHOAI version -- this is the primary risk addressed in Exercise 4.
+
+|**FLOATING + Manual** -- `moderate risk`
+|The channel has no version pin but approval is Manual: OLM creates an InstallPlan for each new release and waits for you to approve it. Timing is under your control, but the version you land on is whatever the channel serves when you approve.
+
+|**PINNED** -- no marker
+|The channel name contains a version number (e.g., `stable-3.5`, `stable-v1.0`), so it only delivers z-stream patches within that minor and version drift is bounded. Note that PINNED + Automatic still installs z-stream updates unattended -- compatible by policy, but unattended; PINNED + Manual gives you control over even those.
+|===
+
+On this cluster, the RHOAI-dependent operators (rhods-operator, kueue, job-set, leader-worker-set) are all pinned, while the RHCL/Kuadrant serving stack (rhcl, authorino, limitador, dns), the observability stack (cluster-observability-operator, opentelemetry-product), and cert-manager are floating with Automatic approval -- the high-risk combination. The audit also covers platform operators (the ODF storage stack pinned to `stable-4.21`, quay, gitops, rhbk), giving you the whole cluster's pinning posture in one view.
+
 '''
 
 == Conceptual Section: Minor Version Upgrade Workflow
