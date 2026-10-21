@@ -493,7 +493,7 @@ curl -sk -H "Authorization: Bearer $(oc whoami -t)" "https://${MODEL_REGISTRY_RO
 
 [NOTE]
 ====
-This section is conceptual. The lab cluster does not have GPUs, so you will inspect Kueue and manage its queues -- not run GPU workloads. The full hands-on treatment (simulated GPUs, a booking app, workload admission, preemption) is the separate GPU Resource Management workshop. Kueue itself is real on this cluster: the Red Hat build of Kueue is enabled as a DataScienceCluster component, so everything you inspect below exists.
+This section is conceptual. The lab cluster does not have GPUs, so you will inspect Kueue and manage its queues -- not run GPU workloads. The full hands-on treatment (simulated GPUs, a booking app, workload admission, preemption) is the separate GPU Resource Management workshop. Kueue itself is real on this cluster: the Red Hat build of Kueue is installed via its OLM operator, so everything you inspect below exists.
 ====
 
 === What Is Kueue?
@@ -567,18 +567,18 @@ A critical detail of Kueue's design: Cohort resources are *additive* to ClusterQ
 
 === Inspect Kueue on the Lab Cluster
 
-The Red Hat build of Kueue is pre-configured in this workshop's GitOps repository: the bootstrap enables the DSC `kueue` component, and the RHOAI operator installs the operator and its CRDs. Verify the component state:
+The Red Hat build of Kueue is pre-configured in this workshop's GitOps repository: the bootstrap installs the `kueue-operator` OLM subscription plus its `Kueue` configuration CR, and the operator then deploys the controller and its CRDs. Check the operator:
 
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
-oc get dsc default-dsc -o jsonpath='{.spec.components.kueue.managementState}'
+oc get csv -A | grep -i kueue
 ----
 
-It should show `Managed`. Check the Kueue controller pods:
+Check the Kueue controller pods:
 
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
-oc get pods -A | grep -i kueue
+oc get pods -n openshift-operators | grep -i kueue
 ----
 
 List the Kueue CRDs:
@@ -605,7 +605,7 @@ On a GPU-equipped cluster, a ResourceFlavor would look like this:
 
 [source,yaml]
 ----
-apiVersion: kueue.x-k8s.io/v1beta1
+apiVersion: kueue.x-k8s.io/v1beta2
 kind: ResourceFlavor
 metadata:
   name: nvidia-a100-40gb
@@ -624,7 +624,7 @@ A ClusterQueue defines the total resources available and the borrowing policy:
 
 [source,yaml]
 ----
-apiVersion: kueue.x-k8s.io/v1beta1
+apiVersion: kueue.x-k8s.io/v1beta2
 kind: ClusterQueue
 metadata:
   name: data-science-team
@@ -681,7 +681,7 @@ Users interact with LocalQueues, not ClusterQueues. Create one in your project p
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc apply -f - <<EOF
-apiVersion: kueue.x-k8s.io/v1beta1
+apiVersion: kueue.x-k8s.io/v1beta2
 kind: LocalQueue
 metadata:
   name: team-queue
@@ -690,6 +690,8 @@ spec:
   clusterQueue: research-team
 EOF
 ----
+
+If the create fails with a webhook admission error, retry -- the Kueue admission webhook service can briefly collide with other operator pods while it settles.
 
 Verify it is active and routed to the ClusterQueue:
 
