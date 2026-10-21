@@ -261,7 +261,7 @@ oc get packagemanifest rhods-operator -n openshift-marketplace -o json | python3
 import json, sys
 pkg = json.load(sys.stdin)
 channels = pkg['status']['channels']
-print(f'{'Channel':<20} {'Current CSV':<30} {'Replaces'}')
+print(f'{\"Channel\":<20} {\"Current CSV\":<30} {\"Replaces\"}')
 print('-' * 80)
 for ch in sorted(channels, key=lambda c: c['name']):
     replaces = ch.get('currentCSVDesc', {}).get('replaces', 'N/A')
