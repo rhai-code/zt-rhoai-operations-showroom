@@ -944,40 +944,36 @@ For a deeper treatment of everything in this section, see *Generative AI on Kube
 
 Hardware profiles in RHOAI define the resource configurations available when creating workbenches and model serving runtimes. They use node selectors, taints, and tolerations to target workloads to specific hardware.
 
-=== 4.1 List Existing Hardware Profiles
-
-Inspect the hardware profiles configured in the RHOAI dashboard settings:
-
+. List the hardware profiles configured in the RHOAI dashboard settings:
++
 [source,bash,role="execute"]
 ----
 oc get acceleratorprofiles -n redhat-ods-applications -o yaml 2>/dev/null || echo "No AcceleratorProfile CRDs found"
 ----
-
++
 Check for the newer HardwareProfile CRD (RHOAI 3.5+):
-
++
 [source,bash,role="execute"]
 ----
 oc get hardwareprofiles -n redhat-ods-applications -o yaml 2>/dev/null || echo "No HardwareProfile CRDs found"
 ----
 
-=== 4.2 Understand the Hardware Profile Structure
-
-A hardware profile defines compute resources and hardware targeting. Here is an example for a CPU-only workbench:
-
+. Understand the Hardware Profile structure. A hardware profile defines compute resources and hardware targeting. Here is an example for a CPU-only workbench:
++
 [source,yaml]
 ----
 apiVersion: dashboard.opendatahub.io/v1alpha1
 kind: HardwareProfile
 metadata:
   name: cpu-small
-  namespace: redhat-ods-applications
+  namespace: redhat-ods-applications   # <1>
 spec:
-  displayName: "Small CPU"
+  displayName: "Small CPU"             # <2>
   description: "2 CPU cores, 4Gi memory - suitable for data exploration"
-  enabled: true
+  enabled: true                        # <3>
   identifiers:
     - displayName: CPU
-      identifier: cpu
+      identifier: cpu                  # <4>
       defaultCount: 2
       minCount: 1
       maxCount: 4
@@ -987,13 +983,19 @@ spec:
       minCount: 2
       maxCount: 8
       units: Gi
-  nodeSelectors:
+  nodeSelectors:                       # <5>
     node-role.kubernetes.io/worker: ""
-  tolerations: []
+  tolerations: []                      # <6>
 ----
+<1> Namespace-scoped: profiles in redhat-ods-applications are available to users across the cluster
+<2> What users see in the dashboard when selecting a hardware profile
+<3> Only enabled profiles are selectable in the workbench and serving creation forms
+<4> Each identifier defines a resource quantity: the default, minimum, and maximum counts a user can request
+<5> nodeSelectors pin the workload to nodes with matching labels -- here, any worker node
+<6> No tolerations: the workload cannot schedule onto tainted (for example, GPU) nodes
 
-And here is an example for a GPU workbench (conceptual -- not applied on this cluster):
-
+. The same structure applies to GPU workloads. Here is an example for a GPU workbench (conceptual -- not applied on this cluster):
++
 [source,yaml]
 ----
 apiVersion: dashboard.opendatahub.io/v1alpha1
@@ -1018,29 +1020,31 @@ spec:
       maxCount: 64
       units: Gi
     - displayName: GPU
-      identifier: nvidia.com/gpu
-      defaultCount: 1
+      identifier: nvidia.com/gpu       # <1>
+      defaultCount: 1                  # <2>
       minCount: 1
       maxCount: 4
-  nodeSelectors:
+  nodeSelectors:                       # <3>
     nvidia.com/gpu.product: "NVIDIA-A100-SXM4-40GB"
-  tolerations:
+  tolerations:                         # <4>
     - key: nvidia.com/gpu
       operator: Exists
       effect: NoSchedule
 ----
+<1> The GPU identifier uses the Kubernetes extended resource name -- the same resource the workload requests
+<2> Default 1 GPU per workload, scalable up to 4
+<3> nodeSelectors target only the nodes advertising the A100 GPU product label
+<4> Tolerations allow the workload onto GPU nodes, which carry the nvidia.com/gpu NoSchedule taint
 
-=== 4.3 Inspect Node Labels and Taints
-
-Review the labels and taints on your cluster nodes to understand what hardware targeting is possible:
-
+. Inspect node labels and taints. Review the labels and taints on your cluster nodes to understand what hardware targeting is possible:
++
 [source,bash,role="execute"]
 ----
 oc get nodes -o custom-columns='NAME:.metadata.name,ROLES:.metadata.labels.node-role\.kubernetes\.io/worker,CPU:.status.capacity.cpu,MEMORY:.status.capacity.memory'
 ----
-
++
 Check for GPU-related labels (expected to be empty on this cluster):
-
++
 [source,bash,role="execute"]
 ----
 oc get nodes -o json | python3 -c "
@@ -1056,9 +1060,9 @@ for node in nodes:
         print(f'{name}: No GPU labels')
 "
 ----
-
++
 Check for taints:
-
++
 [source,bash,role="execute"]
 ----
 oc get nodes -o json | python3 -c "
@@ -1075,7 +1079,7 @@ for node in nodes:
 "
 ----
 
-=== 4.4 Verify
+=== Verify
 
 Confirm you can describe the relationship between hardware profiles, node selectors, and tolerations:
 
