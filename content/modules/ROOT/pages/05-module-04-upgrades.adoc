@@ -494,9 +494,15 @@ oc get subscriptions -A -o json | python3 -c "
 import json, sys
 subs = json.load(sys.stdin)['items']
 
-# Keywords that identify RHOAI-related operators
-keywords = ['rhods', 'serverless', 'servicemesh', 'kiali', 'jaeger',
-            'gpu', 'nfd', 'kueue', 'connectivity', 'kuadrant', 'authorino', 'oadp']
+# Keywords that identify RHOAI-related operators: the RHOAI operator itself,
+# its dependent operators (scheduling, topology, observability), and the
+# serving, auth, and accelerator stack. RHCL is matched by 'rhcl' -- the
+# package and subscription are named rhcl, not connectivity or kuadrant
+keywords = ['rhods', 'kueue', 'job-set', 'leader-worker',
+            'observability', 'opentelemetry',
+            'rhcl', 'authorino', 'limitador', 'dns', 'kuadrant',
+            'serverless', 'servicemesh', 'kiali', 'jaeger',
+            'gpu', 'nfd', 'oadp']
 
 relevant = []
 for s in subs:
@@ -517,6 +523,24 @@ if relevant:
 else:
     print('No RHOAI-related subscriptions found')
 "
+----
+
+Expected output (10 RHOAI-related subscriptions on this cluster):
+
+[source,text]
+----
+Operator                            Channel              Approval     CSV
+----------------------------------------------------------------------------------------------------
+authorino-operator-stable-redhat-operators-openshift-marketplace stable               Automatic    authorino-operator.v1.4.3
+cluster-observability-operator      stable               Automatic    cluster-observability-operator.v1.5.3
+dns-operator-stable-redhat-operators-openshift-marketplace stable               Automatic    dns-operator.v1.4.2
+job-set                             stable-v1.0          Automatic    jobset-operator.v1.0.1
+kueue-operator                      stable-v1.4          Automatic    kueue-operator.v1.4.3
+leader-worker-set                   stable-v1.0          Automatic    leader-worker-set.v1.0.1
+limitador-operator-stable-redhat-operators-openshift-marketplace stable               Automatic    limitador-operator.v1.4.2
+opentelemetry-product               stable               Automatic    opentelemetry-operator.v0.158.0-202610151241
+rhcl-operator                       stable               Automatic    rhcl-operator.v1.4.3
+rhods-operator                      stable-3.5           Automatic    rhods-operator.3.5.2
 ----
 
 [WARNING]
