@@ -936,7 +936,7 @@ ready = len(conds) - removed - len(unhealthy)
 print(f'enabled components ready: {ready}/{len(conds) - removed} ({removed} removed)', file=sys.stderr)
 if unhealthy:
     for c in unhealthy:
-        print(f"  NOT READY: {c['type']} ({c.get('reason', '')})", file=sys.stderr)
+        print('  NOT READY: ' + c['type'] + ' (' + c.get('reason', '') + ')', file=sys.stderr)
 print(len(unhealthy))
 ")
 echo "Unhealthy components: ${UNHEALTHY_COUNT}"
