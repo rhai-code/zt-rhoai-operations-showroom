@@ -493,14 +493,14 @@ curl -sk -H "Authorization: Bearer $(oc whoami -t)" "https://${MODEL_REGISTRY_RO
 
 [NOTE]
 ====
-This section is conceptual. The lab cluster does not have GPUs, so you will inspect Kueue CRDs and understand the architecture without creating actual GPU workloads.
+This section is conceptual. The lab cluster does not have GPUs, so you will inspect Kueue and manage its queues -- not run GPU workloads. The full hands-on treatment (simulated GPUs, a booking app, workload admission, preemption) is the separate GPU Resource Management workshop. Kueue itself is real on this cluster: the Red Hat build of Kueue is enabled as a DataScienceCluster component, so everything you inspect below exists.
 ====
 
 === What Is Kueue?
 
-Kueue is a Kubernetes-native job queuing system that manages resource quotas and fair scheduling for batch workloads. In RHOAI, Kueue is essential for managing GPU access across teams and projects.
+Kueue is a Kubernetes-native job queuing system that manages resource quotas, fair sharing, and workload preemption. In RHOAI, Kueue is essential for managing GPU access across teams and projects: teams submit work to queues, Kueue decides when work admits, and preemption rules decide whose work yields when quota is reclaimed.
 
-Kueue operates through four key CRDs:
+Kueue operates through five key CRDs:
 
 [cols="1,3"]
 |===
@@ -516,23 +516,76 @@ Kueue operates through four key CRDs:
 |A namespace-scoped queue that points to a ClusterQueue. Users submit workloads to a LocalQueue; Kueue routes them to the backing ClusterQueue.
 
 |**Cohort**
-|A logical grouping of ClusterQueues that can borrow resources from each other. Enables cross-team resource sharing with guaranteed minimums.
+|A logical grouping of ClusterQueues -- optionally holding its own quota -- whose members can borrow from each other. Enables cross-team resource sharing with guaranteed minimums.
+
+|**Workload**
+|The queueing representation of a submitted job. Kueue admits, queues, and preempts Workloads; a job's pods only start once its Workload is admitted.
 |===
 
-=== Inspect Kueue Installation
+=== Borrowing vs Reclaiming
 
-Check whether the Kueue operator is installed:
+Two concepts make shared pools work:
 
-[source,bash,role="execute"]
+**Borrowing**: a ClusterQueue uses quota from another ClusterQueue in the same Cohort when its own quota is exhausted. The borrower gets extra capacity it does not own.
+
+**Reclaiming**: the queue that owns the quota takes it back from a borrower -- by *preempting* the borrower's workloads when the owner needs its resources.
+
+In short: borrowing is "can I use your unused quota?", reclaiming is "I need my quota back."
+
+=== Preemption Policies
+
+A ClusterQueue's `preemption` block decides what it may evict:
+
+[cols="2,3"]
+|===
+|Policy |Meaning
+
+|`withinClusterQueue: LowerPriority`
+|Evict lower-priority workloads *within the same queue* to admit a higher-priority one.
+
+|`reclaimWithinCohort: Any`
+|Preempt workloads that are borrowing from the Cohort, to take owned quota back. Only meaningful with a non-zero `nominalQuota` -- with zero quota there is nothing to reclaim.
+
+|`borrowWithinCohort: LowerPriority`
+|While borrowing from the Cohort, preempt *other borrowers* with lower priority -- useful for urgent unreserved work. `Never` means the queue never preempts to borrow.
+|===
+
+=== The Cohort Model and Additive Quotas
+
+The full GPU lab configures Kueue in a flat Cohort model:
+
+[source,text]
 ----
-oc get csv -A | grep kueue
+Cohort: unreserved
+├── ClusterQueue: unreserved          (borrows from cohort, no preemption rights)
+├── ClusterQueue: unreserved-priority (can preempt low-priority borrowing workloads)
+├── ClusterQueue: user-alice          (protected nominalQuota, can reclaim from cohort)
+└── ClusterQueue: user-bob            (protected nominalQuota, can reclaim from cohort)
 ----
 
-List any existing Kueue CRDs:
+A critical detail of Kueue's design: Cohort resources are *additive* to ClusterQueue resources -- total capacity = the sum of the ClusterQueue `nominalQuota` values **plus** the Cohort's `nominalQuota`. Quotas do not overlap; they stack. If an unreserved ClusterQueue also had a non-zero nominalQuota, it would be added on top and inflate the total beyond the cluster's real capacity. That is why the GPU lab keeps every unreserved queue at zero nominal and puts the real capacity exclusively in the Cohort: the booking app shrinks the Cohort by exactly the reserved amount when a user reserves a GPU, which is what triggers preemption of unreserved work.
 
-[source,bash,role="execute"]
+=== Inspect Kueue on the Lab Cluster
+
+The Red Hat build of Kueue is pre-configured in this workshop's GitOps repository: the bootstrap enables the DSC `kueue` component, and the RHOAI operator installs the operator and its CRDs. Verify the component state:
+
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
-oc get crd | grep kueue
+oc get dsc default-dsc -o jsonpath='{.spec.components.kueue.managementState}'
+----
+
+It should show `Managed`. Check the Kueue controller pods:
+
+[source,bash,role="execute",subs="specialcharacters,attributes"]
+----
+oc get pods -A | grep -i kueue
+----
+
+List the Kueue CRDs:
+
+[source,bash,role="execute",subs="specialcharacters,attributes"]
+----
+oc get crd | grep kueue.x-k8s.io
 ----
 
 Expected CRDs include:
@@ -540,6 +593,7 @@ Expected CRDs include:
 [source,text]
 ----
 clusterqueues.kueue.x-k8s.io
+cohorts.kueue.x-k8s.io
 localqueues.kueue.x-k8s.io
 resourceflavors.kueue.x-k8s.io
 workloads.kueue.x-k8s.io
@@ -575,7 +629,7 @@ kind: ClusterQueue
 metadata:
   name: data-science-team
 spec:
-  cohort: "research-department"        # <1>
+  cohortName: "research-department"    # <1>
   resourceGroups:
     - coveredResources: ["cpu", "memory", "nvidia.com/gpu"]
       flavors:
@@ -596,36 +650,63 @@ spec:
 <2> Guaranteed quota: 4 GPUs always available to this team
 <3> Can borrow up to 2 additional GPUs from the cohort when other teams have idle resources
 
-=== Example: LocalQueue in a User Namespace
+=== Inspect the Demo Quota Tree
 
-Users interact with LocalQueues, not ClusterQueues:
+The bootstrap also seeds a CPU-only demo quota tree: a `research-department` Cohort owning a shared pool, and a `research-team` ClusterQueue with its own protected quota plus a borrowing limit. Quota bookkeeping needs no GPUs:
 
-[source,yaml]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
+oc get cohort research-department -o jsonpath='{range .spec.resourceGroups[0].flavors[0].resources[*]}{.name}: {.nominalQuota}{"\n"}\{end}'
+
+oc get clusterqueues -o custom-columns='NAME:.metadata.name,COHORT:.spec.cohortName,PENDING:.status.pendingWorkloads,ADMITTED:.status.admittedWorkloads'
+----
+
+Inspect the `research-team` ClusterQueue:
+
+[source,bash,role="execute",subs="specialcharacters,attributes"]
+----
+oc get clusterqueue research-team -o yaml
+----
+
+Key fields to note in the YAML output:
+
+* `spec.cohortName: research-department` -- joins the shared Cohort
+* `spec.resourceGroups` -- `cpu-flavor` quotas: `nominalQuota: 12` (protected) plus `borrowingLimit: 8` (borrowed from the Cohort when idle)
+* `spec.preemption` -- `reclaimWithinCohort: Any`, so the team can take borrowed quota back when it needs it
+
+=== Create a LocalQueue in Your Project
+
+Users interact with LocalQueues, not ClusterQueues. Create one in your project pointing at the demo ClusterQueue:
+
+[source,bash,role="execute",subs="specialcharacters,attributes"]
+----
+oc apply -f - <<EOF
 apiVersion: kueue.x-k8s.io/v1beta1
 kind: LocalQueue
 metadata:
   name: team-queue
-  namespace: ds-project-alpha
+  namespace: {project_name}
 spec:
-  clusterQueue: data-science-team
+  clusterQueue: research-team
+EOF
 ----
 
-=== Inspect Existing Queues
+Verify it is active and routed to the ClusterQueue:
 
-List all ClusterQueues and their status:
-
-[source,bash,role="execute"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
-oc get clusterqueues -o custom-columns='NAME:.metadata.name,COHORT:.spec.cohort,PENDING:.status.pendingWorkloads,ADMITTED:.status.admittedWorkloads' 2>/dev/null || echo "No ClusterQueues found (expected on a CPU-only cluster)"
+oc get localqueues -A
 ----
 
-List LocalQueues across all namespaces:
+Expected output (your project's LocalQueue, backed by the demo ClusterQueue):
 
-[source,bash,role="execute"]
+[source,text,subs="specialcharacters,attributes"]
 ----
-oc get localqueues -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,CLUSTER_QUEUE:.spec.clusterQueue' 2>/dev/null || echo "No LocalQueues found (expected on a CPU-only cluster)"
+NAMESPACE      NAME         CLUSTERQUEUE    PENDING WORKLOADS   ADMITTED WORKLOADS
+{project_name} team-queue   research-team   0                   0
 ----
+
+Workloads reference the LocalQueue by name; in the GPU lab, Kueue admits those workloads when the backing ClusterQueue has quota -- and queues them (as Workloads) when it does not.
 
 '''
 
