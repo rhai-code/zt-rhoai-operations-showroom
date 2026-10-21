@@ -995,11 +995,11 @@ The best advice is to avoid rollback altogether and fix failed upgrades in place
 
 |**Reinstall previous version**
 |Uninstall the operator, clean up CRDs, and reinstall the previous version from its channel. Data loss risk for any resources managed by the operator.
-|Low -- data loss likely
+|Low -- data loss likely (this may be acceptable depending on the use case)
 
 |**Channel rollback**
 |Switch the subscription back to the previous channel (e.g., `stable-3.5` back to `stable-3.4`). Only works if OLM has not garbage-collected the old CSV bundle.
-|Very low -- rarely works in practice
+|Very low -- rarely works in practice (effectively reinstalls the operator from scratch)
 
 |**Cluster restore**
 |Restore the entire cluster from an infrastructure backup (etcd snapshot). Reverts everything, not just the operator.
