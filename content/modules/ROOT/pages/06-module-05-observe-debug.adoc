@@ -32,27 +32,32 @@ You can also reach the metrics view from the RHOAI dashboard itself. Open the RH
 +
 Navigate to **Settings -> Cluster settings** and confirm that the *Usage data collection* toggle is enabled. This controls whether the platform emits telemetry to the in-cluster Prometheus instance.
 
-. Inspect the Data Science Cluster Health. Verify that the monitoring stack is collecting RHOAI component metrics by querying for the DataScienceCluster controller:
+. Inspect the Data Science Cluster Health. Verify that the RHOAI monitoring stack is running -- the data-science monitoring stack pods live in the `redhat-ods-monitoring` namespace:
 +
 [source,bash,role="execute"]
 ----
 oc get pods -n redhat-ods-monitoring
 ----
 +
-You should see monitoring pods in `Running` state:
+You should see the monitoring stack pods in `Running` state:
 +
 ----
-NAME                                     READY   STATUS    RESTARTS   AGE
-prometheus-rhoai-0                       3/3     Running   0          4h
-rhods-dashboard-monitoring-7b8f9c6d5-x   1/1     Running   0          4h
+NAME                                                          READY   STATUS    RESTARTS   AGE
+alertmanager-data-science-monitoringstack-0                   2/2     Running   0          2d18h
+alertmanager-data-science-monitoringstack-1                   2/2     Running   0          2d18h
+data-science-collector-collector-0                            1/1     Running   0          6h
+data-science-collector-targetallocator-758b7f47d4-ggn4k       1/1     Running   0          6h
+data-science-perses-0                                         1/1     Running   0          6h
+prometheus-data-science-monitoringstack-0                     3/3     Running   0          2d18h
+thanos-querier-data-science-thanos-querier-74b6964bcd-bvc9x   1/1     Running   0          2d18h
 ----
 
-. Query RHOAI Component Health Metrics. Use the OpenShift metrics console (**Observe -> Metrics**) or the CLI to query component health. The following PromQL query returns the readiness of all RHOAI managed components:
+. Query RHOAI Component Health Metrics. Use the OpenShift metrics console (**Observe -> Metrics**) or the CLI to query component health. The RHOAI monitoring stack runs its own Prometheus in `redhat-ods-monitoring` -- the platform Prometheus in `openshift-monitoring` does not scrape RHOAI targets. The following PromQL query returns the readiness of the monitoring stack scrape targets:
 +
 [source,bash,role="execute"]
 ----
-oc exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- \
-  curl -s 'http://localhost:9090/api/v1/query' \
+oc exec -n redhat-ods-monitoring prometheus-data-science-monitoringstack-0 -c prometheus -- \
+  curl -sk 'https://localhost:9090/api/v1/query' \
   --data-urlencode 'query=up{namespace=~"redhat-ods-.*|rhods-.*"}' | \
   python3 -m json.tool | head -40
 ----
@@ -70,8 +75,8 @@ Query the current GPU utilization across the cluster:
 +
 [source,bash,role="execute"]
 ----
-oc exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- \
-  curl -s 'http://localhost:9090/api/v1/query' \
+oc exec -n redhat-ods-monitoring prometheus-data-science-monitoringstack-0 -c prometheus -- \
+  curl -sk 'https://localhost:9090/api/v1/query' \
   --data-urlencode 'query=DCGM_FI_DEV_GPU_UTIL' | \
   python3 -m json.tool | head -30
 ----
@@ -80,8 +85,8 @@ For GPU memory utilization:
 +
 [source,bash,role="execute"]
 ----
-oc exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- \
-  curl -s 'http://localhost:9090/api/v1/query' \
+oc exec -n redhat-ods-monitoring prometheus-data-science-monitoringstack-0 -c prometheus -- \
+  curl -sk 'https://localhost:9090/api/v1/query' \
   --data-urlencode 'query=DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_FREE' | \
   python3 -m json.tool | head -30
 ----
@@ -94,26 +99,49 @@ Confirm that the RHOAI monitoring stack is healthy:
 
 [source,bash,role="execute"]
 ----
-oc get servicemonitors -n redhat-ods-monitoring
+oc get servicemonitors -n redhat-ods-applications
 ----
 
-Expected output should list at least one ServiceMonitor:
+Expected output should list the RHOAI ServiceMonitors -- the scrape targets feeding the data-science monitoring stack:
 
 ----
-NAME                        AGE
-rhods-monitor               4h
+NAME                                              AGE
+controller-manager-metrics-monitor                21h
+data-science-pipelines-operator-service-monitor   2d23h
+mlflow-metrics-monitor                            21h
+model-serving-api-metrics                         2d23h
+odh-model-controller-metrics-monitor              2d23h
 ----
 
 [source,bash,role="execute"]
 ----
-oc get prometheusrules -n redhat-ods-monitoring
+oc exec -n redhat-ods-monitoring prometheus-data-science-monitoringstack-0 -c prometheus -- \
+  curl -sk 'https://localhost:9090/api/v1/query' \
+  --data-urlencode 'query=count by (namespace) ({namespace=~"redhat-ods-.*"})' | \
+  python3 -m json.tool | head -20
 ----
 
-Expected output:
+Expected output shows the series collected per namespace -- the monitoring stack itself plus the component metrics shipped through the OpenTelemetry collector:
 
 ----
-NAME                        AGE
-rhods-prometheus-rules      4h
+            {
+                "metric": {
+                    "namespace": "redhat-ods-monitoring"
+                },
+                "value": [
+                    <timestamp>,
+                    "5321"
+                ]
+            },
+            {
+                "metric": {
+                    "namespace": "redhat-ods-applications"
+                },
+                "value": [
+                    <timestamp>,
+                    "4"
+                ]
+            }
 ----
 
 == Exercise 2: Query Model Serving Metrics with Prometheus
@@ -132,23 +160,23 @@ oc get inferenceservice -n {project_name}
 If you do not have an InferenceService deployed from earlier modules, you can still review the PromQL queries below. The metric names are standard across all KServe and vLLM deployments.
 ====
 
-. Query Inference Latency. Inference latency is one of the most important SLIs for model serving. Query the p99 request duration over the last 5 minutes:
+. Query Inference Latency. Inference latency is one of the most important SLIs for model serving. Query the p99 end-to-end request duration over the last 5 minutes:
 +
 [source,bash,role="execute"]
 ----
-oc exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- \
-  curl -s 'http://localhost:9090/api/v1/query' \
-  --data-urlencode 'query=histogram_quantile(0.99, sum(rate(ovms_request_time_us_bucket[5m])) by (le, name))' | \
+oc exec -n redhat-ods-monitoring prometheus-data-science-monitoringstack-0 -c prometheus -- \
+  curl -sk 'https://localhost:9090/api/v1/query' \
+  --data-urlencode 'query=histogram_quantile(0.99, sum(rate(kserve_vllm:e2e_request_latency_seconds_bucket[5m])) by (le, model_name))' | \
   python3 -m json.tool | head -30
 ----
 +
-For vLLM-based serving runtimes, the equivalent metric is:
+For token-level visibility, query the inter-token latency (ITL):
 +
 [source,bash,role="execute"]
 ----
-oc exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- \
-  curl -s 'http://localhost:9090/api/v1/query' \
-  --data-urlencode 'query=histogram_quantile(0.99, sum(rate(vllm:request_latency_seconds_bucket[5m])) by (le, model_name))' | \
+oc exec -n redhat-ods-monitoring prometheus-data-science-monitoringstack-0 -c prometheus -- \
+  curl -sk 'https://localhost:9090/api/v1/query' \
+  --data-urlencode 'query=histogram_quantile(0.99, sum(rate(kserve_vllm:inter_token_latency_seconds_bucket[5m])) by (le, model_name))' | \
   python3 -m json.tool | head -30
 ----
 
@@ -156,19 +184,19 @@ oc exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- \
 +
 [source,bash,role="execute"]
 ----
-oc exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- \
-  curl -s 'http://localhost:9090/api/v1/query' \
-  --data-urlencode 'query=sum(rate(ovms_requests_success[5m])) by (name)' | \
+oc exec -n redhat-ods-monitoring prometheus-data-science-monitoringstack-0 -c prometheus -- \
+  curl -sk 'https://localhost:9090/api/v1/query' \
+  --data-urlencode 'query=sum(rate(kserve_vllm:request_success_total[5m])) by (model_name)' | \
   python3 -m json.tool | head -20
 ----
 
-. Query Error Rates. Monitor inference error rates to catch degraded model endpoints:
+. Query Error Rates. Monitor inference error rates to catch degraded model endpoints. vLLM exports request completions under one `finished_reason` label -- errors and aborts are completions too:
 +
 [source,bash,role="execute"]
 ----
-oc exec -n openshift-monitoring prometheus-k8s-0 -c prometheus -- \
-  curl -s 'http://localhost:9090/api/v1/query' \
-  --data-urlencode 'query=sum(rate(ovms_requests_fail[5m])) by (name) / sum(rate(ovms_requests_success[5m])) by (name)' | \
+oc exec -n redhat-ods-monitoring prometheus-data-science-monitoringstack-0 -c prometheus -- \
+  curl -sk 'https://localhost:9090/api/v1/query' \
+  --data-urlencode 'query=sum(rate(kserve_vllm:request_success_total{finished_reason=~"error|abort"}[5m])) by (model_name) / sum(rate(kserve_vllm:request_success_total[5m])) by (model_name)' | \
   python3 -m json.tool | head -20
 ----
 +
@@ -197,23 +225,23 @@ spec:
         - alert: HighInferenceLatency
           expr: |
             histogram_quantile(0.99,
-              sum(rate(ovms_request_time_us_bucket[5m])) by (le, name)
-            ) > 5000000
+              sum(rate(kserve_vllm:e2e_request_latency_seconds_bucket[5m])) by (le, model_name)
+            ) > 5
           for: 10m
           labels:
             severity: warning
           annotations:
-            summary: "High p99 inference latency on {{ $labels.name }}"
+            summary: "High p99 inference latency on {{ $labels.model_name }}"
             description: "p99 inference latency has exceeded 5 seconds for more than 10 minutes."
         - alert: HighInferenceErrorRate
           expr: |
-            sum(rate(ovms_requests_fail[5m])) by (name)
-            / sum(rate(ovms_requests_success[5m])) by (name) > 0.05
+            sum(rate(kserve_vllm:request_success_total{finished_reason=~"error|abort"}[5m])) by (model_name)
+            / sum(rate(kserve_vllm:request_success_total[5m])) by (model_name) > 0.05
           for: 5m
           labels:
             severity: critical
           annotations:
-            summary: "High inference error rate on {{ $labels.name }}"
+            summary: "High inference error rate on {{ $labels.model_name }}"
             description: "Inference error rate exceeds 5% for more than 5 minutes."
 EOF
 ----
@@ -277,7 +305,7 @@ data:
         - url: "https://remote-write.example.com/api/v1/write"
           writeRelabelConfigs:
             - sourceLabels: [__name__]
-              regex: "(ovms_.*|vllm.*|DCGM_.*|rhods_.*)"
+              regex: "(kserve_vllm.*|DCGM_.*|rhods_.*)"
               action: keep
           tlsConfig:
             insecureSkipVerify: false
@@ -291,7 +319,7 @@ data:
 EOF
 ----
 +
-The `writeRelabelConfigs` block limits what gets shipped externally. The regex keeps only RHOAI model serving, DCGM GPU, and RHOAI platform metrics, preventing the full Prometheus corpus from flooding the remote endpoint.
+The `writeRelabelConfigs` block limits what gets shipped externally. The regex keeps only the KServe vLLM serving metrics (`kserve_vllm.*`), DCGM GPU metrics, and RHOAI platform metrics, preventing the full Prometheus corpus from flooding the remote endpoint.
 
 . Create the Credentials Secret
 +
