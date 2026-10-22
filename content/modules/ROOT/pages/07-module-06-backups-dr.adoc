@@ -8,7 +8,7 @@
 
 By the end of this module you will be able to:
 
-* Describe the two-layer backup strategy for OpenShift: etcd snapshots and OADP/Velero
+* Describe the two-layer backup strategy for OpenShift: etcd snapshots via the control-plane `cluster-backup.sh` script (per the OpenShift Backup and Restore book) and OADP/Velero for application workloads
 * Explain the scope and limitations of OADP (what it backs up and what it does not)
 * Configure OADP with a NooBaa (MCG) object bucket as the backup location (the operator install is a cluster prerequisite)
 * Create an OADP backup of an RHOAI project namespace
@@ -41,8 +41,8 @@ OpenShift clusters require two distinct backup layers:
 | Layer | Tool | Scope
 
 | Cluster state
-| etcd snapshot
-| All Kubernetes API objects, certificates, and cluster configuration. This is a full-cluster backup but requires cluster-admin access and node-level operations.
+| etcd snapshot (`cluster-backup.sh`)
+| All Kubernetes API objects, certificates, and cluster configuration. Requires cluster-admin access and node-level operations -- see the https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/backup_and_restore/control-plane-backup-and-restore#backing-up-etcd-data_backup-etcd[OpenShift Backup and Restore book].
 
 | Application workloads
 | OADP / Velero
@@ -51,7 +51,7 @@ OpenShift clusters require two distinct backup layers:
 +
 [IMPORTANT]
 ====
-OADP does not provide full-cluster backup. It cannot back up etcd, Operator installations, or cluster-scoped resources (such as ClusterRoles, StorageClasses, or CRDs). For a complete disaster recovery strategy, you need both etcd snapshots *and* OADP namespace backups.
+OADP does not provide full-cluster backup. It cannot back up etcd, Operator installations, or cluster-scoped resources (such as ClusterRoles, StorageClasses, or CRDs). For a complete disaster recovery strategy, you need both etcd snapshots *and* OADP namespace backups. The etcd layer is documented in the https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/backup_and_restore/control-plane-backup-and-restore#backing-up-etcd-data_backup-etcd[OpenShift Backup and Restore book] -- the `/usr/local/bin/cluster-backup.sh` script on the control plane nodes; see the conceptual section at the end of this module.
 ====
 
 . Verify the OADP Operator (Prerequisite)
@@ -515,6 +515,43 @@ Notebooks: 0
 
 All resources should be present and pods should be in `Running` or `Completed` state.
 
+== Conceptual Section: Backing up etcd (Cluster State)
+
+The OADP backups in the exercises above cover application workloads. The second backup layer -- cluster state -- is the etcd snapshot. OpenShift documents this procedure in the https://docs.redhat.com/en/documentation/openshift_container_platform/4.21/html/backup_and_restore/control-plane-backup-and-restore#backing-up-etcd-data_backup-etcd[Backup and Restore book, "Backing up and restoring etcd data"]. Follow the official documentation for etcd backup and restore; this section is orientation only.
+
+=== The cluster-backup.sh Script
+
+The etcd Cluster Operator installs a backup script on every control plane node: `/usr/local/bin/cluster-backup.sh`. It is a wrapper around `etcdctl snapshot save` and produces two files in the target directory:
+
+* `snapshot_<datetimestamp>.db` -- the etcd snapshot itself
+* `static_kuberesources_<datetimestamp>.tar.gz` -- the static pod resources; if etcd encryption is enabled, it also contains the encryption keys
+
+The documented invocation runs the script inside a root debug session on a control plane node:
+
+[source,bash,role="execute"]
+----
+oc debug --as-root node/<control_plane_node>
+# inside the debug shell:
+chroot /host
+/usr/local/bin/cluster-backup.sh /home/core/assets/backup
+----
+
+[NOTE]
+====
+Do not run this manually on a shared lab cluster. Normally a scheduled job or an automation pipeline runs the script, not a human: OpenShift 4.21 can create a managed cron job in the `openshift-etcd` namespace that writes recurring snapshots to a PVC (automated etcd backups are a Technology Preview feature, enabled with the `TechPreviewNoUpgrade` feature gate). The etcd snapshot also has a high I/O cost -- the documentation recommends non-peak usage hours.
+====
+
+=== Run It as a Job, Store It Off Cluster
+
+An etcd snapshot written to a control-plane node's local disk is not a backup: losing the node loses the backup with it. The OpenShift documentation is explicit -- store backups in a secure location, ideally outside the OpenShift Container Platform environment.
+
+The production pattern is exactly that: a scheduled job or an automation pipeline invokes `cluster-backup.sh` on one control-plane node, then copies the two files off cluster -- to object storage such as S3, an NFS share, or a dedicated backup system. A single invocation from one control-plane host is enough; never take one backup per host.
+
+[IMPORTANT]
+====
+A restore must use an etcd backup taken from the same z-stream release -- a 4.21.5 backup restores a 4.21.5 cluster. Take an etcd backup before every upgrade, and keep several z-stream-specific copies off cluster. Backups taken before the first certificate rotation completes (24 hours after installation) contain expired certificates and are unusable.
+====
+
 == Conceptual Section: The RHOAI CRD Dependency Graph
 
 Understanding the dependency relationships between RHOAI custom resources is essential for planning backup and restore operations. Resources must be restored in the correct order, because child resources depend on parent resources existing first.
@@ -651,7 +688,7 @@ These third-party tools are listed for awareness and context. Red Hat does not c
 
 In this module you:
 
-* Learned the two-layer backup strategy for OpenShift: etcd snapshots for cluster state and OADP/Velero for application workloads
+* Learned the two-layer backup strategy for OpenShift: etcd snapshots via the control-plane `cluster-backup.sh` script (per the OpenShift Backup and Restore book) for cluster state, and OADP/Velero for application workloads
 * Configured OADP with a real NooBaa (MCG) object bucket claimed from the cluster's OpenShift Data Foundation (the operator install is a cluster prerequisite applied via GitOps)
 * Created an OADP backup of your RHOAI project namespace, including Kubernetes resources
 * Simulated data loss by deleting resources, then restored from backup and verified resource integrity
