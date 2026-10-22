@@ -10,7 +10,7 @@ By the end of this module you will be able to:
 
 * Describe the two-layer backup strategy for OpenShift: etcd snapshots and OADP/Velero
 * Explain the scope and limitations of OADP (what it backs up and what it does not)
-* Install and configure the OADP operator with an S3-compatible backup location
+* Install and configure the OADP operator with a NooBaa (MCG) object bucket as the backup location
 * Create an OADP backup of an RHOAI project namespace
 * Restore from an OADP backup and verify the integrity of restored resources
 * Diagram the RHOAI CRD dependency graph and explain restore ordering concerns
@@ -30,10 +30,10 @@ We apply the manifests manually to the cluster in this exercise so we can see th
 
 OADP (OpenShift API for Data Protection) is the Red Hat-supported backup solution for OpenShift application workloads. It is built on the Velero open-source project and supports backup, restore, and migration of Kubernetes resources and persistent volumes.
 
-=== 1.1 Understand the Two-Layer Backup Strategy
-
+. Understand the Two-Layer Backup Strategy
++
 OpenShift clusters require two distinct backup layers:
-
++
 [cols="1,1,2",options="header"]
 |===
 | Layer | Tool | Scope
@@ -46,30 +46,30 @@ OpenShift clusters require two distinct backup layers:
 | OADP / Velero
 | Kubernetes resources and PersistentVolume data within selected namespaces. Does *not* include etcd, Operators, or cluster-scoped resources by default.
 |===
-
++
 [IMPORTANT]
 ====
 OADP does not provide full-cluster backup. It cannot back up etcd, Operator installations, or cluster-scoped resources (such as ClusterRoles, StorageClasses, or CRDs). For a complete disaster recovery strategy, you need both etcd snapshots *and* OADP namespace backups.
 ====
 
-=== 1.2 Install the OADP Operator
-
+. Install the OADP Operator
++
 Check if OADP is already installed:
-
++
 [source,bash,role="execute"]
 ----
 oc get csv -n openshift-adp 2>/dev/null | grep oadp
 ----
-
++
 If no output is returned, install the operator. First, create the namespace:
-
++
 [source,bash,role="execute"]
 ----
 oc create namespace openshift-adp --dry-run=client -o yaml | oc apply -f -
 ----
-
++
 Create the OperatorGroup and Subscription:
-
++
 [source,bash,role="execute"]
 ----
 cat <<'EOF' | oc apply -f -
@@ -88,53 +88,84 @@ metadata:
   name: redhat-oadp-operator
   namespace: openshift-adp
 spec:
-  channel: stable-1.4
+  channel: stable
   installPlanApproval: Automatic
   name: redhat-oadp-operator
   source: redhat-operators
   sourceNamespace: openshift-marketplace
 EOF
 ----
-
-Wait for the operator to install:
-
++
+The `stable` channel currently delivers OADP 1.6.x. Wait for the operator to install:
++
 [source,bash,role="execute"]
 ----
 oc get csv -n openshift-adp --watch
 ----
++
+Press `Ctrl+C` once the OADP CSV shows `Succeeded`. It can take a couple of minutes for OLM to create the InstallPlan and pull the operator image.
 
-Press `Ctrl+C` once the CSV shows `Succeeded`.
-
-=== 1.3 Configure an S3-Compatible Backup Location
-
-OADP requires an object storage backend for backup data. Create a credentials secret for your S3-compatible storage:
-
-[WARNING]
-====
-The credentials below are placeholders. Replace them with your actual S3 endpoint credentials. In a production environment, use External Secrets Operator or Vault to manage these credentials.
-====
-
+. Configure a NooBaa Object Bucket as the Backup Location
++
+OADP requires an object storage backend for backup data. This cluster runs OpenShift Data Foundation, and its NooBaa (MultiCloud Gateway) object store provides S3-compatible object storage. Claim a real bucket from it with an ObjectBucketClaim (OBC) -- NooBaa creates the bucket, and the OBC generates a Secret with the S3 credentials:
++
 [source,bash,role="execute"]
 ----
-cat <<'EOF' > /tmp/oadp-credentials
+cat <<'EOF' | oc apply -f -
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: oadp-backups
+  namespace: openshift-adp
+spec:
+  generateBucketName: oadp-backups
+  storageClassName: openshift-storage.noobaa.io
+  additionalConfig:
+    bucketclass: noobaa-default-bucket-class
+EOF
+----
++
+Wait for the claim to become `Bound`:
++
+[source,bash,role="execute"]
+----
+oc get obc oadp-backups -n openshift-adp
+----
++
+Expected output:
++
+----
+NAME           STORAGE-CLASS                 PHASE   AGE
+oadp-backups   openshift-storage.noobaa.io   Bound   10s
+----
++
+The claim generates three resources: the bucket itself (named `oadp-backups-<uuid>`), a Secret named `oadp-backups` carrying `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, and a ConfigMap named `oadp-backups` with the bucket endpoint details. Build the Velero credentials Secret from the OBC Secret:
++
+[source,bash,role="execute"]
+----
+cat <<EOF > $HOME/oadp-credentials
 [default]
-aws_access_key_id=minio-access-key
-aws_secret_access_key=minio-secret-key
+aws_access_key_id=$(oc get secret oadp-backups -n openshift-adp -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
+aws_secret_access_key=$(oc get secret oadp-backups -n openshift-adp -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
 EOF
 
 oc create secret generic cloud-credentials \
   -n openshift-adp \
-  --from-file=cloud=/tmp/oadp-credentials \
+  --from-file=cloud=$HOME/oadp-credentials \
   --dry-run=client -o yaml | oc apply -f -
 
-rm -f /tmp/oadp-credentials
+rm -f $HOME/oadp-credentials
 ----
-
-Create the DataProtectionApplication CR:
-
++
+Read the bucket details from the OBC ConfigMap and create the DataProtectionApplication CR that points OADP at the real NooBaa S3 endpoint:
++
 [source,bash,role="execute"]
 ----
-cat <<'EOF' | oc apply -f -
+BUCKET_NAME=$(oc get configmap oadp-backups -n openshift-adp -o jsonpath='{.data.BUCKET_NAME}')
+BUCKET_HOST=$(oc get configmap oadp-backups -n openshift-adp -o jsonpath='{.data.BUCKET_HOST}')
+BUCKET_PORT=$(oc get configmap oadp-backups -n openshift-adp -o jsonpath='{.data.BUCKET_PORT}')
+
+cat <<EOF | oc apply -f -
 apiVersion: oadp.openshift.io/v1alpha1
 kind: DataProtectionApplication
 metadata:
@@ -155,17 +186,23 @@ spec:
           profile: default
           region: us-east-1
           s3ForcePathStyle: "true"
-          s3Url: "http://minio.openshift-adp.svc:9000"
+          s3Url: "https://${BUCKET_HOST}:${BUCKET_PORT}"
+          insecureSkipTLSVerify: "true"
         credential:
           key: cloud
           name: cloud-credentials
         default: true
         objectStorage:
-          bucket: oadp-backups
+          bucket: ${BUCKET_NAME}
           prefix: rhoai
         provider: aws
 EOF
 ----
++
+[NOTE]
+====
+The bucket name is generated with a UUID suffix (for example, `oadp-backups-856a0c75-f915-4dea-b1c5-45ed16b7faa0`), so the DataProtectionApplication reads it from the OBC ConfigMap rather than hard-coding it. The internal NooBaa S3 service presents a service-CA certificate, which is why `insecureSkipTLSVerify` is enabled for the Velero AWS plugin. There are no hardcoded credentials in this exercise -- the OBC generates them, and the credentials file is removed immediately after the Secret is created. In production, manage backup-location credentials with External Secrets Operator or Vault instead of files on the bastion.
+====
 
 === Verify
 
@@ -179,8 +216,8 @@ oc get dataprotectionapplication -n openshift-adp
 Expected output:
 
 ----
-NAME       AGE
-oadp-dpa   30s
+NAME       RECONCILED   AGE
+oadp-dpa   True         2m
 ----
 
 [source,bash,role="execute"]
@@ -191,20 +228,20 @@ oc get backupstoragelocations -n openshift-adp
 Expected output:
 
 ----
-NAME              PHASE       LAST VALIDATED   AGE
-oadp-dpa-1        Available   10s              30s
+NAME         PHASE       LAST VALIDATED   AGE   DEFAULT
+oadp-dpa-1   Available   30s              2m    true
 ----
 
-The `PHASE` must show `Available` before proceeding.
+The `PHASE` must show `Available` before proceeding -- Velero has connected to the NooBaa bucket and validated the credentials.
 
 == Exercise 2: Create an OADP Backup of Your RHOAI Project Namespace
 
-Now that OADP is configured, you will create a backup of the RHOAI project namespace that contains your workbenches, data connections, model serving configurations, and pipeline artifacts.
+Now that OADP is configured, you will create a backup of the RHOAI project namespace that contains your model serving configurations, build pods, and ConfigMaps.
 
-=== 2.1 Review What Will Be Backed Up
-
+. Review What Will Be Backed Up
++
 First, inventory the resources in your project:
-
++
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 echo "=== Pods ==="
@@ -226,18 +263,34 @@ echo ""
 echo "=== Notebooks ==="
 oc get notebooks -n {project_name} 2>/dev/null || echo "None"
 ----
++
+For the `rhoai-ops` project this shows the model serving workload (an `iris-modelcar` InferenceService with its predictor pod and build pods), 13 ConfigMaps, and 4 Secrets -- no PVCs or notebooks, because the modelcar loads model weights from an OCI image rather than a persistent volume.
 
-=== 2.2 Create the Backup
-
-Create a Velero Backup CR that targets your project namespace:
-
+. Create a Test ConfigMap
++
+Create a ConfigMap that acts as a known deletion target later in this module. It must exist *before* the backup is taken, because a restore can only bring back resources that were in the backup:
++
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
+oc create configmap test-rhoai-config \
+  -n {project_name} \
+  --from-literal=model-endpoint=https://model.example.com \
+  --from-literal=pipeline-run-id=run-12345
+----
+
+. Create the Backup
++
+Create a Velero Backup CR that targets your project namespace:
++
+[source,bash,role="execute",subs="specialcharacters,attributes"]
+----
+BACKUP_NAME=rhoai-project-backup-$(date +%Y%m%d-%H%M%S)
+
 cat <<EOF | oc apply -f -
 apiVersion: velero.io/v1
 kind: Backup
 metadata:
-  name: rhoai-project-backup-$(date +%Y%m%d-%H%M%S)
+  name: $\{BACKUP_NAME}
   namespace: openshift-adp
   labels:
     velero.io/storage-location: oadp-dpa-1
@@ -246,34 +299,39 @@ spec:
     - {project_name}
   storageLocation: oadp-dpa-1
   ttl: 720h0m0s
-  defaultVolumesToFsBackup: true
+  defaultVolumesToFsBackup: false
+  snapshotVolumes: false
 EOF
 ----
++
+The name is stored in `BACKUP_NAME` so later steps reference the exact backup without re-deriving it. The `ttl` field sets the retention to 30 days. Because this project has no PVCs, the backup captures Kubernetes resources only: `defaultVolumesToFsBackup: false` skips kopia file-system backups and `snapshotVolumes: false` skips volume snapshots.
++
+[NOTE]
+====
+If you enable `defaultVolumesToFsBackup: true` on a project with modelcar-based InferenceServices, the kopia uploader cannot back up KServe's `kserve-provision-location` volume and the backup completes `PartiallyFailed` with one error -- the Kubernetes resources are still backed up and restorable. For projects with PVCs on snapshot-capable storage classes, remove `snapshotVolumes: false` and leave `defaultVolumesToFsBackup` unset so OADP uses CSI snapshots instead.
+====
 
-The `ttl` field sets the backup retention to 30 days. The `defaultVolumesToFsBackup` flag ensures PersistentVolume data is included via file-system backup (Kopia).
-
-=== 2.3 Monitor Backup Progress
-
-Watch the backup progress:
-
+. Monitor Backup Progress
++
+Watch the backup progress. Use the full resource name `backups.velero.io` -- the short name `backups` resolves to NooBaa's CNPG backup CRD on clusters with ODF installed:
++
 [source,bash,role="execute"]
 ----
-oc get backups -n openshift-adp --sort-by=.metadata.creationTimestamp
+oc get backups.velero.io -n openshift-adp
 ----
-
-Wait until the `PHASE` column shows `Completed`:
-
++
+Expected output:
++
 ----
-NAME                                  STATUS      ERRORS   WARNINGS   CREATED                         EXPIRES
-rhoai-project-backup-20260916-1430    Completed   0        0          2026-09-16 14:30:00 +0000 UTC   29d
+NAME                                   AGE
+rhoai-project-backup-20261022-104518   2m
 ----
-
-For detailed progress, describe the most recent backup:
-
++
+Wait until the backup is no longer `InProgress`. For detailed progress, describe the backup:
++
 [source,bash,role="execute"]
 ----
-LATEST_BACKUP=$(oc get backups -n openshift-adp --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
-oc describe backup "$LATEST_BACKUP" -n openshift-adp | tail -30
+oc describe backup.velero.io "$BACKUP_NAME" -n openshift-adp | tail -20
 ----
 
 === Verify
@@ -282,8 +340,7 @@ Confirm the backup completed without errors:
 
 [source,bash,role="execute"]
 ----
-LATEST_BACKUP=$(oc get backups -n openshift-adp --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
-oc get backup "$LATEST_BACKUP" -n openshift-adp -o jsonpath='{.status.phase}'
+oc get backup.velero.io "$BACKUP_NAME" -n openshift-adp -o jsonpath='{.status.phase}'
 echo ""
 ----
 
@@ -297,26 +354,28 @@ Check for any warnings or errors:
 
 [source,bash,role="execute"]
 ----
-LATEST_BACKUP=$(oc get backups -n openshift-adp --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
-echo "Errors: $(oc get backup $LATEST_BACKUP -n openshift-adp -o jsonpath='{.status.errors}')"
-echo "Warnings: $(oc get backup $LATEST_BACKUP -n openshift-adp -o jsonpath='{.status.warnings}')"
+ERRORS=$(oc get backup.velero.io $BACKUP_NAME -n openshift-adp -o jsonpath='{.status.errors}')
+echo "Errors: ${ERRORS:-0}"
+echo "Warnings: $(oc get backup.velero.io $BACKUP_NAME -n openshift-adp -o jsonpath='{.status.warnings}')"
 ----
 
 Expected output:
 
 ----
 Errors: 0
-Warnings: 0
+Warnings: 3
 ----
+
+`Errors` must be `0` -- Velero omits the field entirely when there are no errors, so the shell default prints `0`. The `Warnings` count varies between runs (three to six on this cluster), all stale-discovery warnings for the kueue `visibility.kueue.x-k8s.io` API groups. They do not affect the backup.
 
 == Exercise 3: Simulate Data Loss and Restore from Backup
 
 In this exercise you will simulate a data loss scenario by deleting resources from your project, then restore them from the OADP backup.
 
-=== 3.1 Record the Current State
-
+. Record the Current State
++
 Before simulating data loss, record what exists:
-
++
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 echo "ConfigMaps before deletion:"
@@ -329,100 +388,91 @@ echo "PVCs before deletion:"
 oc get pvc -n {project_name} --no-headers | wc -l
 ----
 
-=== 3.2 Simulate Data Loss
-
-Delete a ConfigMap to simulate accidental data loss:
-
+. Simulate Data Loss
++
+Delete the test ConfigMap you created in Exercise 2 to simulate accidental data loss:
++
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
-# Create a test ConfigMap first to have a controlled deletion target
-oc create configmap test-rhoai-config \
-  -n {project_name} \
-  --from-literal=model-endpoint=https://model.example.com \
-  --from-literal=pipeline-run-id=run-12345
-
-# Verify it exists
-oc get configmap test-rhoai-config -n {project_name}
-
-# Now delete it to simulate data loss
 oc delete configmap test-rhoai-config -n {project_name}
 
 # Confirm it is gone
 oc get configmap test-rhoai-config -n {project_name} 2>&1 || true
 ----
-
++
 Expected output for the final command:
-
++
 ----
 Error from server (NotFound): configmaps "test-rhoai-config" not found
 ----
-
++
 [NOTE]
 ====
 In a real disaster recovery scenario, the data loss would be more extensive -- deleted namespaces, lost PVCs, or corrupted InferenceService configurations. The OADP restore process is the same regardless of the scope of data loss.
 ====
 
-=== 3.3 Create a Restore
-
-Restore from the most recent backup:
-
+. Create a Restore
++
+Restore from the backup taken in Exercise 2:
++
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
-LATEST_BACKUP=$(oc get backups -n openshift-adp --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
+RESTORE_NAME=rhoai-project-restore-$(date +%Y%m%d-%H%M%S)
 
 cat <<EOF | oc apply -f -
 apiVersion: velero.io/v1
 kind: Restore
 metadata:
-  name: rhoai-project-restore-$(date +%Y%m%d-%H%M%S)
+  name: $\{RESTORE_NAME}
   namespace: openshift-adp
 spec:
-  backupName: ${LATEST_BACKUP}
+  backupName: $\{BACKUP_NAME}
   includedNamespaces:
     - {project_name}
-  restorePVs: true
   existingResourcePolicy: update
 EOF
 ----
-
++
 The `existingResourcePolicy: update` setting means existing resources will be patched to match the backup state, and missing resources will be recreated.
 
-=== 3.4 Monitor the Restore
-
-Watch the restore progress:
-
+. Monitor the Restore
++
+Watch the restore progress. As with backups, use the full resource name `restores.velero.io`:
++
 [source,bash,role="execute"]
 ----
-oc get restores -n openshift-adp --sort-by=.metadata.creationTimestamp
+oc get restores.velero.io -n openshift-adp
 ----
 
-Wait until the `PHASE` shows `Completed`.
+Wait until the restore reaches `Completed`.
 
 === Verify
 
-Confirm the restore completed:
+Confirm the restore completed and the deleted ConfigMap is back:
 
-[source,bash,role="execute"]
+[source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
-LATEST_RESTORE=$(oc get restores -n openshift-adp --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
-oc get restore "$LATEST_RESTORE" -n openshift-adp -o jsonpath='{.status.phase}'
+oc get restore.velero.io "$RESTORE_NAME" -n openshift-adp -o jsonpath='{.status.phase}'
 echo ""
+oc get configmap test-rhoai-config -n {project_name}
 ----
 
 Expected output:
 
 ----
 Completed
+NAME                DATA   AGE
+test-rhoai-config   2      30s
 ----
 
 == Exercise 4: Verify Restored Resources
 
 After a restore, you must verify that the restored resources are functional, not just present.
 
-=== 4.1 Verify ConfigMaps and Secrets
-
+. Verify ConfigMaps and Secrets
++
 Check that the resource counts match the pre-deletion state:
-
++
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 echo "ConfigMaps after restore:"
@@ -432,36 +482,38 @@ echo "Secrets after restore:"
 oc get secrets -n {project_name} --no-headers | wc -l
 ----
 
-=== 4.2 Verify PersistentVolumeClaims
-
+. Verify PersistentVolumeClaims
++
 PVCs are often the most critical resources to verify after restore:
-
++
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc get pvc -n {project_name}
 ----
++
+This project has no PVCs -- the modelcar-based InferenceService needs none. For workbench projects, every restored PVC should show `Bound` status. A PVC showing `Pending` indicates a storage backend issue that needs investigation.
 
-All PVCs should show `Bound` status. Any PVC showing `Pending` indicates a storage backend issue that needs investigation.
-
-=== 4.3 Verify InferenceServices (If Present)
-
+. Verify InferenceServices (If Present)
++
 If your project had InferenceServices before the backup:
-
++
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc get inferenceservice -n {project_name} 2>/dev/null
 ----
++
+The restored InferenceService shows `True`. Note that the predictor pod's `AGE` is fresh -- KServe reconciled the restored resource and started a new serving pod, which may take several minutes to load the model.
 
-Restored InferenceServices may take several minutes to become `Ready` as the serving runtime pods restart and load models.
-
-=== 4.4 Verify Data Connections
-
+. Verify Data Connections
++
 RHOAI data connections are stored as Secrets with the label `opendatahub.io/managed=true`. Verify they survived the restore:
-
++
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
 oc get secrets -n {project_name} -l opendatahub.io/managed=true
 ----
++
+This project has no data connections, so an empty list is expected. For workbench projects, every data connection Secret should reappear here.
 
 === Verify
 
@@ -478,6 +530,21 @@ echo "Notebooks: $(oc get notebooks -n {project_name} --no-headers 2>/dev/null |
 echo ""
 echo "=== Pod Status ==="
 oc get pods -n {project_name} --no-headers 2>/dev/null | awk '{print $3}' | sort | uniq -c | sort -rn
+----
+
+Expected output:
+
+----
+=== Resource Summary ===
+ConfigMaps: 13
+Secrets: 4
+PVCs: 0
+InferenceServices: 1
+Notebooks: 0
+
+=== Pod Status ===
+   2 Completed
+   1 Running
 ----
 
 All resources should be present and pods should be in `Running` or `Completed` state.
@@ -619,8 +686,8 @@ These third-party tools are listed for awareness and context. Red Hat does not c
 In this module you:
 
 * Learned the two-layer backup strategy for OpenShift: etcd snapshots for cluster state and OADP/Velero for application workloads
-* Installed and configured the OADP operator with an S3-compatible backup location
-* Created an OADP backup of your RHOAI project namespace, including Kubernetes resources and PersistentVolume data
+* Installed and configured the OADP operator with a real NooBaa (MCG) object bucket claimed from the cluster's OpenShift Data Foundation
+* Created an OADP backup of your RHOAI project namespace, including Kubernetes resources
 * Simulated data loss by deleting resources, then restored from backup and verified resource integrity
 * Mapped the RHOAI CRD dependency graph from DataScienceCluster down through Notebooks, Pipelines, Model Registry, and InferenceServices
 * Identified current product gaps in RHOAI backup/restore: no dependency-aware ordering, no cross-namespace coordination, and no official RHOAI-specific backup procedure
