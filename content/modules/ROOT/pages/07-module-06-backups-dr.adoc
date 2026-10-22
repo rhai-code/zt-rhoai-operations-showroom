@@ -332,7 +332,20 @@ Errors: 0
 Warnings: 3
 ----
 
-`Errors` must be `0` -- Velero omits the field entirely when there are no errors, so the shell default prints `0`. The `Warnings` count varies between runs (three to six on this cluster), all stale-discovery warnings for the kueue `visibility.kueue.x-k8s.io` API groups. They do not affect the backup.
+`Errors` must be `0` -- Velero omits the field entirely when there are no errors, so the shell default prints `0`. The `Warnings` count varies between runs (three to six on this cluster). To interrogate them, read the Velero pod logs:
+
+[source,bash,role="execute"]
+----
+oc logs -n openshift-adp deploy/velero --since=10m | grep -i "failed to discover group" | head -3
+----
+
+Expected output:
+
+----
+level=warning msg="Failed to discover group: visibility.kueue.x-k8s.io/v1beta1" error="stale GroupVersion discovery: visibility.kueue.x-k8s.io/v1beta1"
+----
+
+Every warning is this one message: discovery noise from Velero's cached discovery client, not backup content. The kueue operator registers the `visibility.kueue.x-k8s.io` API services (served by the `kueue-visibility-server` in `openshift-operators`), but the visibility group carries no resources on this cluster, so every discovery refresh flags it stale. `Errors: 0` and the restore in Exercise 3 are the real proof the backup is sound.
 
 == Exercise 3: Simulate Data Loss and Restore from Backup
 
