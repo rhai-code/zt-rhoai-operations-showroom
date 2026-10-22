@@ -358,10 +358,8 @@ Before simulating data loss, record what exists:
 ----
 echo "ConfigMaps before deletion:"
 oc get configmaps -n {project_name} --no-headers | wc -l
-echo ""
 echo "Secrets before deletion:"
 oc get secrets -n {project_name} --no-headers | wc -l
-echo ""
 echo "PVCs before deletion:"
 oc get pvc -n {project_name} --no-headers | wc -l
 ----
@@ -468,7 +466,6 @@ Check that the resource counts match the pre-deletion state:
 ----
 echo "ConfigMaps after restore:"
 oc get configmaps -n {project_name} --no-headers | wc -l
-echo ""
 echo "Secrets after restore:"
 oc get secrets -n {project_name} --no-headers | wc -l
 ----
