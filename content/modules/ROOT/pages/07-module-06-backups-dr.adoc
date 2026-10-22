@@ -306,8 +306,7 @@ Confirm the backup completed without errors:
 
 [source,bash,role="execute"]
 ----
-oc get backup.velero.io "$BACKUP_NAME" -n openshift-adp -o jsonpath='{.status.phase}'
-echo ""
+oc get backup.velero.io "$BACKUP_NAME" -n openshift-adp -o jsonpath='{.status.phase}{"\n"}'
 ----
 
 Expected output:
@@ -422,8 +421,22 @@ Watch the restore progress. As with backups, use the full resource name `restore
 ----
 oc get restores.velero.io -n openshift-adp
 ----
-
-Wait until the restore reaches `Completed`.
++
+Expected output:
++
+----
+NAME                                    AGE
+rhoai-project-restore-20261022-105426   90s
+----
++
+Wait until the restore is no longer `InProgress`. For detailed progress, describe the restore:
++
+[source,bash,role="execute"]
+----
+oc describe restore.velero.io "$RESTORE_NAME" -n openshift-adp | tail -20
+----
++
+The describe shows the restore progress -- `Items Restored` against `Total Items` (68 items for this project) -- and the final phase.
 
 === Verify
 
@@ -431,8 +444,7 @@ Confirm the restore completed and the deleted ConfigMap is back:
 
 [source,bash,role="execute",subs="specialcharacters,attributes"]
 ----
-oc get restore.velero.io "$RESTORE_NAME" -n openshift-adp -o jsonpath='{.status.phase}'
-echo ""
+oc get restore.velero.io "$RESTORE_NAME" -n openshift-adp -o jsonpath='{.status.phase}{"\n"}'
 oc get configmap test-rhoai-config -n {project_name}
 ----
 
