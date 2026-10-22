@@ -10,7 +10,7 @@ By the end of this module you will be able to:
 
 * Describe the two-layer backup strategy for OpenShift: etcd snapshots and OADP/Velero
 * Explain the scope and limitations of OADP (what it backs up and what it does not)
-* Install and configure the OADP operator with a NooBaa (MCG) object bucket as the backup location
+* Configure OADP with a NooBaa (MCG) object bucket as the backup location (the operator install is a cluster prerequisite)
 * Create an OADP backup of an RHOAI project namespace
 * Restore from an OADP backup and verify the integrity of restored resources
 * Diagram the RHOAI CRD dependency graph and explain restore ordering concerns
@@ -26,9 +26,11 @@ The backup and restore procedures in this module are best-practices recommendati
 We apply the manifests manually to the cluster in this exercise so we can see the changes and learn the process. In a production environment, you would use GitOps to apply the manifests to the cluster. We do not practice what we preach as far as GitOps in this workshop.
 ====
 
-== Exercise 1: Install and Configure OADP Operator
+== Exercise 1: Configure the OADP Backup Location
 
 OADP (OpenShift API for Data Protection) is the Red Hat-supported backup solution for OpenShift application workloads. It is built on the Velero open-source project and supports backup, restore, and migration of Kubernetes resources and persistent volumes.
+
+The operator install is a cluster prerequisite: the cluster bootstrap applies the OADP Subscription via GitOps (the Automation repo's `cluster/oadp/` directory). This exercise configures the backup location -- a real NooBaa object bucket claimed from the cluster's OpenShift Data Foundation.
 
 . Understand the Two-Layer Backup Strategy
 +
@@ -52,58 +54,22 @@ OpenShift clusters require two distinct backup layers:
 OADP does not provide full-cluster backup. It cannot back up etcd, Operator installations, or cluster-scoped resources (such as ClusterRoles, StorageClasses, or CRDs). For a complete disaster recovery strategy, you need both etcd snapshots *and* OADP namespace backups.
 ====
 
-. Install the OADP Operator
+. Verify the OADP Operator (Prerequisite)
 +
-Check if OADP is already installed:
+Confirm the operator is installed and running:
 +
 [source,bash,role="execute"]
 ----
 oc get csv -n openshift-adp 2>/dev/null | grep oadp
 ----
 +
-If no output is returned, install the operator. First, create the namespace:
+Expected output:
 +
-[source,bash,role="execute"]
 ----
-oc create namespace openshift-adp --dry-run=client -o yaml | oc apply -f -
-----
-+
-Create the OperatorGroup and Subscription:
-+
-[source,bash,role="execute"]
-----
-cat <<'EOF' | oc apply -f -
-apiVersion: operators.coreos.com/v1
-kind: OperatorGroup
-metadata:
-  name: oadp-operator-group
-  namespace: openshift-adp
-spec:
-  targetNamespaces:
-    - openshift-adp
----
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
-metadata:
-  name: redhat-oadp-operator
-  namespace: openshift-adp
-spec:
-  channel: stable
-  installPlanApproval: Automatic
-  name: redhat-oadp-operator
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
-EOF
+oadp-operator.v1.6.1   OADP Operator   1.6.1   oadp-operator.v1.6.0   Succeeded
 ----
 +
-The `stable` channel currently delivers OADP 1.6.x. Wait for the operator to install:
-+
-[source,bash,role="execute"]
-----
-oc get csv -n openshift-adp --watch
-----
-+
-Press `Ctrl+C` once the OADP CSV shows `Succeeded`. It can take a couple of minutes for OLM to create the InstallPlan and pull the operator image.
+If the CSV is missing, the bootstrap has not applied the Subscription yet -- check the `oadp` Application (`oc -n openshift-gitops get applications.argoproj.io oadp`) and wait for it to converge. The OLM resolve and image pull can take a couple of minutes.
 
 . Configure a NooBaa Object Bucket as the Backup Location
 +
@@ -686,7 +652,7 @@ These third-party tools are listed for awareness and context. Red Hat does not c
 In this module you:
 
 * Learned the two-layer backup strategy for OpenShift: etcd snapshots for cluster state and OADP/Velero for application workloads
-* Installed and configured the OADP operator with a real NooBaa (MCG) object bucket claimed from the cluster's OpenShift Data Foundation
+* Configured OADP with a real NooBaa (MCG) object bucket claimed from the cluster's OpenShift Data Foundation (the operator install is a cluster prerequisite applied via GitOps)
 * Created an OADP backup of your RHOAI project namespace, including Kubernetes resources
 * Simulated data loss by deleting resources, then restored from backup and verified resource integrity
 * Mapped the RHOAI CRD dependency graph from DataScienceCluster down through Notebooks, Pipelines, Model Registry, and InferenceServices
