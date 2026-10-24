@@ -158,18 +158,6 @@ Pay attention to these key fields:
 ----
 oc get subscription -n redhat-ods-operator -o jsonpath='{range .items[*]}{"Name: "}{.metadata.name}{"\n"}{"Channel: "}{.spec.channel}{"\n"}{"Source: "}{.spec.source}{"\n"}{"Install Plan Approval: "}{.spec.installPlanApproval}{"\n"}{"Current CSV: "}{.status.currentCSV}{"\n"}{"Installed CSV: "}{.status.installedCSV}{"\n\n"}{end}'
 ----
-+
-Expected output (your version numbers may differ):
-+
-[source,text]
-----
-Name: rhods-operator
-Channel: stable-3.5
-Source: redhat-operators
-Install Plan Approval: Automatic
-Current CSV: rhods-operator.3.5.2
-Installed CSV: rhods-operator.3.5.2
-----
 
 . Check the Installed ClusterServiceVersion. The CSV contains the full operator manifest including version, required APIs, and deployment status:
 +
@@ -178,13 +166,7 @@ Installed CSV: rhods-operator.3.5.2
 oc get csv -n redhat-ods-operator -o custom-columns='NAME:.metadata.name,PHASE:.status.phase,VERSION:.spec.version'
 ----
 +
-Expected output:
-+
-[source,text]
-----
-NAME                    PHASE       VERSION
-rhods-operator.3.5.2    Succeeded   3.5.2
-----
+image::51-rhods-subscription.png[The rhods-operator Subscription fields and the Succeeded CSV with its InstallPlan,link=self,window=blank,width=800]
 
 . Inspect the Install Plan. The InstallPlan records what OLM will install or has installed:
 +
@@ -219,17 +201,9 @@ echo "CSV:      ${CSV}"
 oc get packagemanifest rhods-operator -n openshift-marketplace -o jsonpath='{range .status.channels[*]}{.name}{"\t"}{.currentCSV}{"\n"}{end}'
 ----
 +
-Expected output (excerpt -- the catalog also exposes the legacy 2.x `stable`/`fast` channels and the pre-release `alpha`/`beta` channels; channels vary by catalog version):
-+
-[source,text]
-----
-eus-3.5	rhods-operator.3.5.2
-fast	rhods-operator.2.25.8
-fast-3.x	rhods-operator.3.3.1
-stable-3.4	rhods-operator.3.4.5
-stable-3.5	rhods-operator.3.5.2
-stable-3.x	rhods-operator.3.5.2
-----
+image::53-channels.png[packagemanifest channels for rhods-operator and the upgrade lineage,link=self,window=blank,width=850]
+
+The catalog also exposes the legacy 2.x `stable`/`fast` channels and the pre-release `alpha`/`beta` channels; channels vary by catalog version.
 
 . Understand Channel Semantics:
 +
@@ -385,6 +359,8 @@ print('-' * 40)
 for k in sorted(comps):
     print(f'{k:<24} {comps[k].get(\"managementState\", \"-\")}')"
 ----
++
+image::55-dsc-components.png[The rhods-operator subscriptions, owned CRDs, and the DSC components with management states,link=self,window=blank,width=850]
 +
 Expected output on this cluster (8 components `Managed`, the rest `Removed`; your values may differ):
 +
@@ -553,6 +529,8 @@ If dependent operators have `installPlanApproval: Automatic`, they can upgrade t
 == Exercise 4: Demonstrate Manual Approval Strategy and Operator Pinning
 
 . Understand Approval Strategies. OLM supports two install plan approval strategies:
+
+image::58-console-subscription-details.png[Console Subscription details: update channel stable-3.5, Automatic approval,link=self,window=blank,width=800]
 +
 [cols="1,3"]
 |===
@@ -571,6 +549,8 @@ If dependent operators have `installPlanApproval: Automatic`, they can upgrade t
 ----
 oc get installplan -A -o custom-columns='NAMESPACE:.metadata.namespace,NAME:.metadata.name,CSV:.spec.clusterServiceVersionNames[*],APPROVED:.spec.approved,PHASE:.status.phase' | grep -v "^NAMESPACE" | sort
 ----
+
+image::57-console-subscriptions.png[OpenShift console Subscriptions page showing the rhods-operator subscription,link=self,window=blank,width=800]
 
 . Demonstrate Switching to Manual Approval (Dry Run).
 +
@@ -624,6 +604,8 @@ Manual approval is a function of the OperatorGroup's namespace, not of a single 
 ====
 
 . Operator Pinning: The RHCL Example. Operator pinning prevents a dependent operator from upgrading beyond a tested version. This is critical for operators like RHCL where a minor version bump could introduce breaking API changes.
+
+image::58b-console-subscription-yaml.png[The Subscription manifest YAML in the console,link=self,window=blank,width=800]
 +
 **Why pin RHCL?**
 +
@@ -680,6 +662,8 @@ for s in sorted(subs, key=lambda x: x['metadata']['name']):
     print(f'  [{pin_status:8}] [{manual:6}] {name:<40} channel={channel}{risk}')
 "
 ----
+
+image::59-pinning-audit.png[Operator Pinning Audit: PINNED vs FLOATING with HIGH RISK markers,link=self,window=blank,width=850]
 
 Expected output (subscriptions on this cluster -- your names, channels, and count will differ):
 
@@ -944,6 +928,8 @@ if [ "${UNHEALTHY_COUNT}" -gt 0 ]; then
     echo "WARNING: Resolve unhealthy DataScienceCluster components before upgrading!"
 fi
 ----
+
+image::60-preupgrade-health.png[DSC Ready and cluster operator health before an upgrade,link=self,window=blank,width=800]
 
 On a healthy cluster the DSC shows `READY=True` and the only `False` conditions are intentionally `Removed` components.
 

@@ -13,6 +13,10 @@ By the end of this module you will be able to:
 * Demonstrate GitOps self-healing by making a manual change and watching ArgoCD revert it
 * Describe multi-cluster management with ACM and GitOps policy generation
 * Navigate the ArgoCD UI and understand the different components of an ArgoCD Application
+
+image::13-argocd-app-detail.png[ArgoCD Application details for rhoai-install: the resource tree with Synced and Healthy status,link=self,window=blank,width=800]
+
+image::12-argocd-apps-list.png[ArgoCD Applications list view: the app-of-apps Applications with Synced/Healthy status,link=self,window=blank,width=800]
 * Identify baseline security integration points with ACS
 * Compare secrets management strategies (Vault, Age-SOPS, ExternalSecrets Operator)
 * Describe the role of Standard Operating Procedures (SOPs) in day-2 operations
@@ -130,6 +134,10 @@ kustomize build --enable-alpha-plugins --enable-helm manifests/01-ops-patterns/e
 kustomize build --enable-alpha-plugins --enable-helm manifests/01-ops-patterns/envs/prod
 ----
 
+image::08-kustomize-build.png[kustomize build output: the fully inflated dev environment manifests,link=self,window=blank,width=850]
+
+image::07-helm-template.png[helm template output: the rendered Subscription manifest for the dev environment (beta channel, Automatic approval),link=self,window=blank,width=850]
+
 Diffing the two kustomize outputs shows exactly what changes between dev and prod: the `DataScienceCluster` components and the `Subscription` channel and approval. A side-by-side `diff` with process substitution keeps it to a single command:
 
 [source,bash,role="execute"]
@@ -141,16 +149,7 @@ diff -y --color --suppress-common-lines \
 
 The output (excerpt) -- dev on the left, prod on the right:
 
-[source]
-----
-      managementState: Removed				      |	      managementState: Managed
-							      >	      rawDeploymentServiceConfig: Headless
-      managementState: Removed				      |	      managementState: Managed
-							      >	      registriesNamespace: rhoai-model-registries
-  channel: beta						      |	  channel: stable-3.5
-  installPlanApproval: Automatic			      |	  installPlanApproval: Manual
-							      >	  startingCSV: rhods-operator.v3.5.0
-----
+image::09-diff-dev-prod.png[Side-by-side diff: managementState Removed vs Managed, channel beta vs stable-3.5, approval Automatic vs Manual,link=self,window=blank,width=850]
 
 Before committing, the same output can be validated with a client-side dry run. Nothing is applied -- ArgoCD will still be the only thing that ever applies these manifests to a live environment:
 
@@ -173,6 +172,8 @@ subscription.operators.coreos.com/rhods-operator configured (dry run)
 [NOTE]
 ====
 Read the verb: `configured (dry run)` means the resource already exists on the cluster and would be updated; `created (dry run)` means it would be newly created. Either way nothing is persisted -- and dry runs still need API discovery for custom resources, so they are run against a cluster.
+
+image::10-dry-run.png[oc apply --dry-run=client output: configured (dry run) and created (dry run) lines,link=self,window=blank,width=800]
 ====
 
 With the ACM https://github.com/stolostron/policy-generator-plugin/releases[policy-generator-plugin] installed, the same command at the top level wraps both environments into ACM `Policy` objects:
@@ -369,10 +370,10 @@ Disconnected deployment is covered in detail in the xref:08-appendix-disconnecte
 In this module you:
 
 * Learned the phoenix platform-as-code pattern and why disposable, Git-driven infrastructure is essential for RHOAI operations
-* Installed the OpenShift GitOps Operator and verified the ArgoCD instance
-* Created an ArgoCD Application that manages RHOAI operator subscriptions using the Kustomize-based structure from the `rhoai-cluster-pool` repository
+* Rendered Helm charts, Kustomize bases, and diffs for a runnable RHOAI operator install example that composes all three strategies
+* Verified the pre-provisioned openshift-gitops instance and navigated its Applications in the ArgoCD UI
 * Explored the app-of-apps pattern with its three composition strategies (Helm, Kustomize, raw YAML)
-* Demonstrated GitOps self-healing by introducing and watching ArgoCD revert a manual namespace change
+* Validated changes with a client-side dry run against the cluster before committing them
 * Reviewed multi-cluster management with ACM policy generation, baseline security with ACS, secrets management strategies, and SOP practices
 
 Proceed to xref:03-module-02-idp-users-groups.adoc[Module 2: Data Stewardship, Users & Access Control].

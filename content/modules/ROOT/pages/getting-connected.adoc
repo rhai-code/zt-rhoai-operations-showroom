@@ -9,6 +9,8 @@ Your workshop environment is pre-provisioned from the RHOAI Deploy & Configure w
 
 Open the OpenShift web console at:
 
+image::01-console-home.png[OpenShift web console home, logged in as the admin user with the Administrator perspective and cluster status visible,link=self,window=blank,width=800]
+
 {openshift_console_url}
 
 Log in with:
@@ -34,12 +36,16 @@ Confirm that the RHOAI operator and DataScienceCluster are healthy:
 oc get datasciencecluster -A
 ----
 
+image::02-dsc-ready.png[oc get datasciencecluster -A output: the default-dsc DataScienceCluster with READY True,link=self,window=blank,width=800]
+
 You should see a DataScienceCluster resource with `Phase: Ready`.
 
 [source,bash,role="execute"]
 ----
 oc get csv -n redhat-ods-operator | grep rhods
 ----
+
+image::03-rhods-csv.png[oc get csv output: the RHOAI operator ClusterServiceVersion with Succeeded phase,link=self,window=blank,width=800]
 
 Confirm the RHOAI operator CSV shows `Succeeded`.
 
@@ -50,6 +56,8 @@ Open the RHOAI dashboard at:
 {rhoai_dashboard_url}
 
 Verify you can see the dashboard home page with the navigation sidebar.
+
+image::04-rhoai-dashboard-home.png[RHOAI dashboard home with the navigation sidebar and project shortcuts,link=self,window=blank,width=800]
 
 === Clone the Workshop Manifests
 
@@ -63,6 +71,8 @@ ls manifests
 ----
 
 You should see the per-module folders (`01-ops-patterns`, `02-idp-users-groups`, `03-models-assets-scale`).
+
+image::05-clone-manifests.png[ls manifests output showing the per-module manifest folders,link=self,window=blank,width=800]
 
 [NOTE]
 ====
@@ -79,6 +89,8 @@ Create a project for the workshop exercises:
 ----
 oc new-project {project_name}
 ----
+
+image::06-new-project.png[oc new-project rhoai-ops output: Now using project,link=self,window=blank,width=800]
 
 == Ready
 

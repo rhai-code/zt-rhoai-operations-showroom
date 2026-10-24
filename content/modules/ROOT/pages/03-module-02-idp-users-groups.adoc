@@ -147,20 +147,7 @@ Confirm the persona groups from FreeIPA are available in OpenShift:
 oc get groups
 ----
 
-Expected output:
-
-----
-NAME                        USERS
-insurance-data-owners       own-bob
-insurance-data-scientists   sci-frank
-insurance-data-stewards     ste-dave
-lending-data-owners         own-alice
-lending-data-scientists     sci-eve
-lending-data-stewards       ste-carol
-ml-engineers                mle-gina
-rhods-admins                ops-admin
-rhods-users                 own-alice, own-bob, sci-eve, sci-frank, ste-carol, ste-dave, mle-gina, ops-admin
-----
+image::14-oc-get-groups.png[oc get groups output: the FreeIPA persona groups with their users,link=self,window=blank,width=800]
 
 === Verify
 
@@ -179,6 +166,8 @@ insurance-data-owners [own-bob]
 ----
 
 Both data owners are in place, one per line of business. Now you can configure the platform authorization model.
+
+image::15-groups-verify.png[oc get group custom-columns output: both data owners, one per line of business,link=self,window=blank,width=800]
 
 == Exercise 2: Configure the RHOAI Auth CR
 
@@ -228,19 +217,7 @@ Every data owner, steward, and scientist is a member of `rhods-users`, so they c
 oc get auth auth -n redhat-ods-applications -o jsonpath='{.spec}' | python3 -m json.tool
 ----
 
-Expected output:
-
-[source,json]
-----
-{
-    "adminGroups": [
-        "rhods-admins"
-    ],
-    "allowedGroups": [
-        "rhods-users"
-    ]
-}
-----
+image::16-auth-cr-verify.png[oc apply of the auth-config and the resulting Auth CR spec: adminGroups rhods-admins, allowedGroups rhods-users,link=self,window=blank,width=800]
 
 With dashboard access in place, the next step is to give each line of business its own project with per-persona roles.
 
@@ -263,6 +240,8 @@ done
 [IMPORTANT]
 ====
 The `opendatahub.io/dashboard: "true"` label is what makes a namespace show up in the RHOAI dashboard as a *Data Science Project* -- a bare `oc new-project` namespace is invisible to it. Projects created from the dashboard get the label automatically; namespaces created from the CLI do not, so label them explicitly.
+
+image::18-ex3-projects.png[oc new-project loop output for rhoai-lending and rhoai-insurance,link=self,window=blank,width=800]
 ====
 
 [CAUTION]
@@ -285,13 +264,7 @@ oc get namespaces -l opendatahub.io/dashboard=true \
   -o custom-columns=NAME:.metadata.name
 ----
 
-Expected output:
-
-----
-NAME
-rhoai-insurance
-rhoai-lending
-----
+image::19-dashboard-label-verify.png[oc get namespaces -l opendatahub.io/dashboard=true: the list the RHOAI dashboard renders,link=self,window=blank,width=800]
 
 Then the rolebindings:
 
@@ -301,15 +274,9 @@ oc get rolebindings -n rhoai-lending \
   -o custom-columns=ROLE:.roleRef.name,GROUP:.subjects[0].name
 ----
 
-Expected output:
+image::20-rolebindings-verify.png[oc get rolebindings output: admin for owners and rhods-admins, edit for stewards and scientists,link=self,window=blank,width=800]
 
-----
-ROLE                 GROUP
-admin                lending-data-owners
-admin                rhods-admins
-edit                 lending-data-stewards
-edit                 lending-data-scientists
-----
+The excerpt shows the persona bindings; every namespace also carries standard `system:` rolebindings such as `system:image-puller`, plus a rolebinding naming the user that created the project.
 
 Projects and bindings are in place. Next, add the fine-grained workbench layer.
 
@@ -406,9 +373,13 @@ workbench-operator    lending-data-scientists
 
 The platform authorization model is fully configured. Now prove it -- log in as the personas and see what each one can actually do.
 
+image::21-workbench-roles-verify.png[Workbench ClusterRoles created and bound per persona in each line of business,link=self,window=blank,width=800]
+
 == Exercise 5: Prove the Model -- Persona Access Walkthrough
 
 Everything so far is configuration. This exercise verifies the RBAC decisions as the personas themselves, using `oc auth can-i` impersonation -- no credential switching required. Impersonate the persona *and* their groups: groups are claimed at authentication, and impersonation does not run it, so every decision must ride the persona's groups along with `--as-group`.
+
+image::17-console-groups.png[OpenShift console User Management Groups page listing the persona groups,link=self,window=blank,width=800]
 
 [IMPORTANT]
 ====
@@ -501,6 +472,8 @@ no
 
 The results in full:
 
+image::25-can-i-walkthrough.png[oc auth can-i impersonation walkthrough: yes/no/no/yes/no/no matching the results table,link=self,window=blank,width=800]
+
 [cols="4,1,1,2",options="header"]
 |===
 |Decision (as user, in namespace) |Result |Role |Why
@@ -545,9 +518,15 @@ Log in to the RHOAI dashboard as one of the personas - use the `freeipa-ldap` pr
 We set all the user's to use the same password, **Password**: `{password}`
 
 . Log in as `sci-eve` (Data Scientist, Lending). The Data Science Projects list shows `rhoai-lending` as a project you can work in -- and `rhoai-insurance` is not listed at all.
+
+image::22-sci-eve-projects.png[RHOAI dashboard as sci-eve: only rhoai-lending is listed, rhoai-insurance is not listed at all,link=self,window=blank,width=800]
 . There is no way to reach `rhoai-insurance` from the dashboard -- no RoleBinding, no project listing, no workbench. LOB isolation is absolute.
 . Log out and back in as `own-alice` (Data Owner, Lending). The project settings and access control for `rhoai-lending` are now available to you.
+
+image::23-own-alice-access-control.png[RHOAI dashboard as own-alice: the rhoai-lending project Roles tab with per-persona bindings,link=self,window=blank,width=800]
 . Finally, prove the denial path as `dev-nia` (Developer -- not in `rhods-users`). Log in to the console via **freeipa-ldap**: authentication succeeds -- `dev-nia` is a directory user, and the OpenShift IdP admits every directory user. OpenShift is the platform layer: `dev-nia` lands with no groups and an empty console.
+
+image::24-dev-nia-console-empty.png[OpenShift console as dev-nia: authenticated but no groups, No Projects found,link=self,window=blank,width=800]
 . Open the RHOAI dashboard as `dev-nia` -- the Auth CR's `allowedGroups` gates RHOAI, and `dev-nia` is not in `rhods-users`, so the dashboard shows the Access denied page. Two gates: the identity provider decides who can log in to OpenShift; the Auth CR decides who can use RHOAI.
 
 The dashboard is simply rendering the OpenShift groups and RoleBindings you configured -- which is exactly the point. Access control does not stop at namespaces, though -- the next exercise adds Models-as-a-Service to the picture.
@@ -625,6 +604,8 @@ auth policy reference it -- which is exactly what the next step creates.
 ----
 ls manifests/02-idp-users-groups/maas/
 ----
+
+image::28-maas-modelref-pending.png[LLMInferenceService Ready and MaaSModelRef Pending awaiting governance pairing,link=self,window=blank,width=800]
 +
 Review the performance-tier subscription:
 +
@@ -689,6 +670,8 @@ oc apply -f manifests/02-idp-users-groups/maas/authpolicy-performance.yaml
 oc apply -f manifests/02-idp-users-groups/maas/authpolicy-standard.yaml
 ----
 
+image::29-maas-governance-apply.png[oc apply of the four governance manifests: two MaaSSubscriptions and two MaaSAuthPolicies,link=self,window=blank,width=800]
+
 . Mint API keys as the personas. API keys bind to a subscription -- the tier. Log in as the
   lending data scientist and mint a standard-tier key -- then try the performance tier:
 +
@@ -719,6 +702,8 @@ curl -sSk -X POST "${HOST}/maas-api/v1/api-keys" \
 ----
 +
 The performance-tier attempt is rejected at the devportal:
+
+image::30-mint-keys-scieve.png[The standard-tier key minted and the performance-tier attempt rejected at the key mint,link=self,window=blank,width=800]
 +
 ----
 Unable to resolve a subscription for this API key
@@ -745,6 +730,8 @@ export ALICE_KEY=$(curl -sSk -X POST "${HOST}/maas-api/v1/api-keys" \
 oc login -u {user} -p {password} {openshift_api_url}
 echo "Owner key: ${ALICE_KEY:0:12}..."
 ----
+
+image::31-mint-key-alice.png[The data owner mints the performance-tier key,link=self,window=blank,width=800]
 
 . Prove tier-bound group enforcement. Call the model with each key. Body-based routing needs
   the full catalog id, `publishers/rhoai-lending/models/qwen25-05b`:
@@ -774,12 +761,14 @@ curl -sSk "${HOST}/v1/chat/completions" \
   -d "{\"model\":\"${MODEL_ID}\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"max_tokens\":20}" \
   -o /dev/null -w "HTTP %{http_code}\n"
 ----
+
+image::32-model-calls.png[Chat completions through the MaaS gateway with each key; the invalid key rejected,link=self,window=blank,width=800]
 +
 Expected results:
 +
 * The owner's performance-tier key returns a completion, at 100 000 tokens per minute.
 * The scientist's standard-tier key returns a completion, at 10 000 tokens per minute.
-* The invalid key returns `HTTP 401` -- the gateway rejects it with an empty body, before the model is ever reached. And `sci-eve` never held a performance-tier key at all: the mint itself was rejected in the previous step.
+* The invalid key returns `HTTP 403` -- the gateway rejects it before the model is ever reached (judge by the status: the body is empty). And `sci-eve` never held a performance-tier key at all: the mint itself was rejected in the previous step.
 +
 [NOTE]
 ====
@@ -788,37 +777,21 @@ This is the data owner's lever in practice: grant a tier by adding a group to th
 
 === Verify
 
-* The governance objects pair with the model, and the `MaaSModelRef` flips from `Pending` to
-  `Ready` -- the model is published:
+* The governance objects pair with the model, and the `MaaSModelRef` flips from
+  `Pending` to `Ready` -- the model is published:
 +
 [source,bash,role="execute"]
 ----
 oc get maasmodelref -n rhoai-lending
 ----
 +
-Expected output:
-+
-----
-NAME              PHASE     ENDPOINT   HTTPROUTE                      GATEWAY                AGE
-qwen25-05b-maas   Ready                qwen25-05b-maas-kserve-route   maas-default-gateway   20m
-----
+image::33-maas-governance-active.png[MaaSModelRef Ready and the subscriptions and auth policies Active,link=self,window=blank,width=800]
 
-* The subscriptions and auth policies are active:
+* The subscriptions and auth policies are active (the same render shows both outputs):
 +
 [source,bash,role="execute"]
 ----
 oc get maassubscription,maasauthpolicy -n models-as-a-service
-----
-+
-Expected output:
-+
-----
-NAME                                                              PHASE     PRIORITY   AGE
-maassubscription.maas.opendatahub.io/lending-performance-tier     Active    1          5m
-maassubscription.maas.opendatahub.io/lending-standard-tier        Active    0          5m
-NAME                                                                  PHASE     AGE
-maasauthpolicy.maas.opendatahub.io/lending-performance-tier-auth      Active    5m
-maasauthpolicy.maas.opendatahub.io/lending-standard-tier-auth         Active    5m
 ----
 
 * The data owners, stewards, and platform admins can see the MaaS dashboards. The Observability

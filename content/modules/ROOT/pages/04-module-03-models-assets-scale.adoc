@@ -27,6 +27,8 @@ We apply the manifests manually to the cluster in this exercise so we can see th
 
 In this exercise you will create a custom workbench image based on the RHOAI Jupyter minimal image, add Python packages for a specific workflow, and import it into the RHOAI dashboard using an ImageStream CRD.
 
+image::40-workbench-image-selection.png[RHOAI dashboard Create-workbench form with the Custom ML Workbench image selected,link=self,window=blank,width=800]
+
 . Inspect the base workbench images. First, review the existing workbench images that ship with
   RHOAI:
 +
@@ -35,15 +37,7 @@ In this exercise you will create a custom workbench image based on the RHOAI Jup
 oc get imagestreams -n redhat-ods-applications -l opendatahub.io/notebook-image=true
 ----
 +
-You should see output similar to:
-+
-[source,text]
-----
-NAME                               IMAGE REPOSITORY                                                                                              TAGS
-s2i-minimal-notebook               image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2i-minimal-notebook                 2025.1,2025.2,3.4,3.5
-s2i-generic-data-science-notebook  image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/s2i-generic-data-science-notebook    2025.1,2025.2,3.4,3.5
-code-server-notebook               image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/code-server-notebook                 2025.1,2025.2,3.4,3.5
-----
+image::37-imagestreams-list.png[oc get imagestreams output: the base workbench images shipped with RHOAI,link=self,window=blank,width=850]
 
 . Create the custom workbench Dockerfile. Create a working directory under your home and write
   a Dockerfile that extends the minimal Jupyter image with additional packages:
@@ -105,6 +99,8 @@ oc start-build custom-ml-workbench \
   --follow \
   -n {project_name}
 ----
++
+image::38-builds-complete.png[oc get builds output: both the custom-ml-workbench and iris-modelcar builds Complete,link=self,window=blank,width=800]
 +
 [NOTE]
 ====
@@ -173,6 +169,8 @@ List all workbench images now visible to the dashboard:
 ----
 oc get imagestreams -n redhat-ods-applications -l opendatahub.io/notebook-image=true -o custom-columns='NAME:.metadata.name,DISPLAY:.metadata.annotations.opendatahub\.io/notebook-image-name'
 ----
+
+image::39-imagestream-verify.png[ImageStream labels and the full workbench image list including Custom ML Workbench,link=self,window=blank,width=800]
 
 You should see your `custom-ml-workbench` in the list with display name "Custom ML Workbench".
 
@@ -338,13 +336,7 @@ Check the state:
 oc get inferenceservice iris-modelcar -n {project_name}
 ----
 
-Expected output:
-
-[source,text]
-----
-NAME            URL                                                          READY   PREV   LATEST   PREVROLLEDOUTREVISION   LATESTREADYREVISION   AGE
-iris-modelcar   http://iris-modelcar-predictor.rhoai-ops.svc.cluster.local   True                                                                  8m32s
-----
+image::42-inferenceservice-ready.png[oc get inferenceservice output: iris-modelcar READY True with the predictor pod running,link=self,window=blank,width=800]
 
 [WARNING]
 ====
@@ -472,6 +464,8 @@ curl -sk -H "Authorization: Bearer $(oc whoami -t)" "https://${MODEL_REGISTRY_RO
 
 You should see your `iris-classifier` model with its metadata and custom properties.
 
+image::43-model-registry-register.png[REST response listing the registered iris-classifier model and its v1.0 version,link=self,window=blank,width=800]
+
 List versions for the model:
 
 [source,bash,role="execute"]
@@ -570,6 +564,8 @@ The Red Hat build of Kueue is pre-configured in this workshop's GitOps repositor
 oc get csv -A | grep -i kueue
 ----
 
+image::46-kueue-installed.png[Kueue CSV, operator pods, and the five Kueue CRDs,link=self,window=blank,width=800]
+
 Check the Kueue controller pods:
 
 [source,bash,role="execute",subs="specialcharacters,attributes"]
@@ -664,6 +660,8 @@ Inspect the `research-team` ClusterQueue:
 oc get clusterqueue research-team -o yaml
 ----
 
+image::47-kueue-quota-tree.png[The demo quota tree: research-department Cohort quota and the research-team ClusterQueue,link=self,window=blank,width=800]
+
 Key fields to note in the YAML output:
 
 * `spec.cohortName: research-department` -- joins the shared Cohort
@@ -696,13 +694,7 @@ Verify it is active and routed to the ClusterQueue:
 oc get localqueues -A
 ----
 
-Expected output (your project's LocalQueue, backed by the demo ClusterQueue):
-
-[source,text,subs="specialcharacters,attributes"]
-----
-NAMESPACE      NAME         CLUSTERQUEUE    PENDING WORKLOADS   ADMITTED WORKLOADS
-{project_name} team-queue   research-team   0                   0
-----
+image::48-localqueue-verify.png[oc get localqueues -A output: team-queue backed by research-team,link=self,window=blank,width=800]
 
 Workloads reference the LocalQueue by name; in the GPU lab, Kueue admits those workloads when the backing ClusterQueue has quota -- and queues them (as Workloads) when it does not.
 
@@ -946,6 +938,8 @@ Hardware profiles in RHOAI define the resource configurations available when cre
 ----
 oc get acceleratorprofiles -n redhat-ods-applications -o yaml 2>/dev/null || echo "No AcceleratorProfile CRDs found"
 ----
++
+image::49-hardware-profiles.png[HardwareProfile CRs and the cluster node labels (CPU-only, no GPU labels),link=self,window=blank,width=800]
 +
 Check for the newer HardwareProfile CRD (RHOAI 3.5+):
 +

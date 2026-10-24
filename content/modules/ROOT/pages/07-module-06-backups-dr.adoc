@@ -63,6 +63,8 @@ Confirm the operator is installed and running:
 oc get csv -n openshift-adp 2>/dev/null | grep oadp
 ----
 +
+image::72-project-inventory.png[The OADP CSV and the project namespace inventory,link=self,window=blank,width=800]
++
 Expected output:
 +
 ----
@@ -97,6 +99,8 @@ Wait for the claim to become `Bound`:
 ----
 oc get obc oadp-backups -n openshift-adp
 ----
++
+image::73-backup-progress.png[oc describe backup output: the backup progress and items,link=self,window=blank,width=800]
 +
 Expected output:
 +
@@ -346,6 +350,8 @@ level=warning msg="Failed to discover group: visibility.kueue.x-k8s.io/v1beta1" 
 
 Every warning is this one message: discovery noise from Velero's cached discovery client, not backup content. The kueue operator registers the `visibility.kueue.x-k8s.io` API services (served by the `kueue-visibility-server` in `openshift-operators`), but the visibility group carries no resources on this cluster, so every discovery refresh flags it stale. `Errors: 0` and the restore in Exercise 3 are the real proof the backup is sound.
 
+image::74-backup-completed.png[The backup phase Completed with Errors 0 and the Velero discovery warnings,link=self,window=blank,width=800]
+
 == Exercise 3: Simulate Data Loss and Restore from Backup
 
 In this exercise you will simulate a data loss scenario by deleting resources from your project, then restore them from the OADP backup.
@@ -446,13 +452,7 @@ oc get restore.velero.io "$RESTORE_NAME" -n openshift-adp -o jsonpath='{.status.
 oc get configmap test-rhoai-config -n {project_name}
 ----
 
-Expected output:
-
-----
-Completed
-NAME                DATA   AGE
-test-rhoai-config   2      30s
-----
+image::75-restore-verify.png[The restore phase Completed and the deleted ConfigMap restored,link=self,window=blank,width=800]
 
 == Exercise 4: Verify Restored Resources
 
@@ -519,6 +519,8 @@ echo ""
 echo "=== Pod Status ==="
 oc get pods -n {project_name} --no-headers 2>/dev/null | awk '{print $3}' | sort | uniq -c | sort -rn
 ----
+
+image::76-restore-completed.png[oc describe restore output: items restored and the final phase,link=self,window=blank,width=800]
 
 Expected output:
 
